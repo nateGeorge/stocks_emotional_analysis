@@ -3,6 +3,7 @@
 import os
 import json
 import logging as log
+from collections import OrderedDict
 # Try to import modules needed for Google App Engine just in case
 try:
     from google.appengine.api import urlfetch
@@ -21,7 +22,8 @@ except:
 
 # StockTwits details
 ST_BASE_URL = 'https://api.stocktwits.com/api/2/'
-at_name = 'stock_twits_testing2_at'  # name of access token variable in ~/.bashrc
+all_ats = ['', 'stock_twits_testing_at', 'stock_twits_testing2_at', 'stock_twits_aapl1', 'stock_twits_vioo', 'stock_twits_sly']
+at_name = all_ats[0]
 ST_BASE_PARAMS = dict(access_token=os.getenv(at_name))
 
 __author__ = 'Jason Haury'
@@ -37,16 +39,46 @@ def get_header_info(headers):
 class Requests():
     """ Uses `requests` library to GET and POST to Stocktwits, and also to convert resonses to JSON
     """
-    def get_json(url, params=None):
+    def __init__(self):
+        # dictionary of access tokens, max number of calls left, and time till reset
+        self.ats = OrderedDict({'': [200, None],
+                    'stock_twits_testing_at': [400, None],
+                    'stock_twits_testing2_at': [400, None],
+                    'stock_twits_aapl1': [400, None],
+                    'stock_twits_vioo': [400, None],
+                    'stock_twits_sly': [400, None]})
+        self.at = ''
+        self.at_index = 0
+        ST_BASE_PARAMS['access_token'] = os.getenv(self.at)
+
+
+    def set_at(self, at):
+        self.at = at
+        ST_BASE_PARAMS['access_token'] = os.getenv(self.at)
+
+
+    def get_json(self, url, params=None):
         """ Uses tries to GET a few times before giving up if a timeout.  returns JSON
         """
         resp = None
         for i in range(4):
             try:
-                resp = requests.get(url, params=params, timeout=5)
-                # to get headers:
-                # resp.headers
-                # contains how many requests are left and how long till reset
+                tries = 1
+                calls_left = 0
+                while calls_left < 5 and tries < 6:
+                    resp = requests.get(url, params=params, timeout=5)
+                    calls_left, limit_reset_time = get_header_info(resp.headers)
+                    self.ats[self.at] = [calls_left, limit_reset_time]
+                    if calls_left < 5:
+                        self.at_index = (self.at_index + 1) % 6
+                        at = list(self.ats.items())[self.at_index][0]
+                        self.set_at(at)
+                        print('trying next access token:', at)
+                        tries += 1
+                        if tries == 6 and calls_left < 5:
+                            print('tried all access tokens, none have enough calls available')
+                            return None, None
+
             except requests.Timeout:
                 trimmed_params = {k: v for k, v in params.items() if k not in ST_BASE_PARAMS.keys()}
                 log.error('GET Timeout to {} w/ {}'.format(url[len(ST_BASE_URL):], trimmed_params))
@@ -54,7 +86,7 @@ class Requests():
                 break
         if resp is None:
             log.error('GET loop Timeout')
-            return None, None
+            return None, None, None
         else:
             header_info = get_header_info(resp.headers)
             return json.loads(resp.content.decode('utf-8')), header_info[0], header_info[1]
@@ -95,7 +127,7 @@ class GAE():
                 break
         if resp is None:
             log.error('GET loop Timeout')
-            return None, None
+            return None, None, None
         else:
             header_info = get_header_info(resp.headers)
             return json.loads(resp.content.decode('utf-8')), header_info[0], header_info[1]

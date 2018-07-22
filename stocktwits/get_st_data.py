@@ -59,7 +59,7 @@ def scrape_historical_data(ticker='AAPL', verbose=True):
                 print('getting more data, made', str(num_calls), 'calls so far')
                 print(str(req_left), 'requests left')
             time_elapsed = time.time() - start
-            if time_elapsed < 3600 and num_calls > 350 or req_left < 10:
+            if (time_elapsed < 3600 and num_calls > 396) or req_left < 4:
                 print('made too many calls too fast, need to change access token or')
                 print('wait another', str(round((3600 - time_elapsed) / 60)), 'minutes')
                 print('made', str(num_calls), 'calls in', str(round(time_elapsed)), 'seconds')

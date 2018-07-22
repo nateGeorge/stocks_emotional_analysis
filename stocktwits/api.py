@@ -6,7 +6,9 @@ from requestors import ST_BASE_PARAMS, ST_BASE_URL
 
 # Select which library to use for handling HTTP request.  If running on Google App Engine, use `GAE`.
 # Otherwise, use `Requests` which is based on the `requests` module.
-from requestors import Requests as R
+from requestors import Requests as r
+
+R = r()
 
 __author__ = 'Jason Haury'
 
