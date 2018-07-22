@@ -21,7 +21,7 @@ except:
 
 # StockTwits details
 ST_BASE_URL = 'https://api.stocktwits.com/api/2/'
-at_name = 'stock_twits_testing_at'  # name of access token variable in ~/.bashrc
+at_name = 'stock_twits_testing2_at'  # name of access token variable in ~/.bashrc
 ST_BASE_PARAMS = dict(access_token=os.getenv(at_name))
 
 __author__ = 'Jason Haury'
