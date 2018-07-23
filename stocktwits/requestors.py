@@ -33,7 +33,11 @@ def get_header_info(headers):
     """
     gets crucial header info such as how many requests left and when it resets
     """
-    return int(headers['X-RateLimit-Remaining']), int(headers['X-RateLimit-Reset'])
+    try:
+        return int(headers['X-RateLimit-Remaining']), int(headers['X-RateLimit-Reset'])
+    except KeyError:
+        return None, None
+
 
 
 class Requests():
@@ -47,37 +51,47 @@ class Requests():
                     'stock_twits_aapl1': [400, None],
                     'stock_twits_vioo': [400, None],
                     'stock_twits_sly': [400, None]})
-        self.at = ''
-        self.at_index = 0
+        self.at_index = 1
+        self.at = list(self.ats.items())[self.at_index][0]
+        self.at_val = os.getenv(self.at)
         ST_BASE_PARAMS['access_token'] = os.getenv(self.at)
 
 
     def set_at(self, at):
         self.at = at
+        self.at_val = os.getenv(self.at)
         ST_BASE_PARAMS['access_token'] = os.getenv(self.at)
 
 
     def get_json(self, url, params=None):
         """ Uses tries to GET a few times before giving up if a timeout.  returns JSON
         """
+        calls_threshold = 3
         resp = None
         for i in range(4):
             try:
                 tries = 1
-                calls_left = 0
-                while calls_left < 5 and tries < 6:
+                while tries < 6:
                     resp = requests.get(url, params=params, timeout=5)
                     calls_left, limit_reset_time = get_header_info(resp.headers)
+                    if calls_left is None:
+                        continue
                     self.ats[self.at] = [calls_left, limit_reset_time]
-                    if calls_left < 5:
+                    if calls_left < calls_threshold:
+                        print('calls left:', calls_left)
                         self.at_index = (self.at_index + 1) % 6
                         at = list(self.ats.items())[self.at_index][0]
                         self.set_at(at)
+                        # need to update params here so the requests.get uses the new access token
+                        params['access_token'] = self.at_val
                         print('trying next access token:', at)
                         tries += 1
                         if tries == 6 and calls_left < 5:
                             print('tried all access tokens, none have enough calls available')
-                            return None, None
+                            return False, None, None
+                    # if we have enough calls left or if we tried one that worked
+                    elif calls_left >= calls_threshold or (calls_left != 0 and tries > 1):
+                        break
 
             except requests.Timeout:
                 trimmed_params = {k: v for k, v in params.items() if k not in ST_BASE_PARAMS.keys()}
@@ -89,6 +103,11 @@ class Requests():
             return None, None, None
         else:
             header_info = get_header_info(resp.headers)
+            if header_info[0] is None:
+                print('header info was None.  resp.content:')
+                print(resp.content)
+                return None, None, None
+
             return json.loads(resp.content.decode('utf-8')), header_info[0], header_info[1]
 
     def post_json(url, params=None, deadline=30):
