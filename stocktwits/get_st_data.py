@@ -113,6 +113,11 @@ def scrape_historical_data(ticker='AAPL', verbose=True):
         pk.dump(all_messages, f)
 
 
+def get_sentiments_vader(x):
+    vs = analyzer.polarity_scores(x)
+    return pd.Series([vs['compound'], vs['pos'], vs['neg'], vs['neu']], index=['compound', 'pos', 'neg', 'neu'])
+
+
 def load_historical_data(ticker='AAPL'):
     filepath = get_home_dir() + 'stocktwits/data/' + ticker + '/'
     filename = filepath + ticker + '_all_messages.pk'
@@ -135,10 +140,6 @@ def load_historical_data(ticker='AAPL'):
 
     analyzer = SentimentIntensityAnalyzer()
 
-    def get_sentiments_vader(x):
-        vs = analyzer.polarity_scores(x)
-        return pd.Series([vs['compound'], vs['pos'], vs['neg'], vs['neu']], index=['compound', 'pos', 'neg', 'neu'])
-
     sentiments = useful_df['body'].apply(get_sentiments_vader)
     # sentiments.hist()
     full_useful = pd.concat([useful_df, sentiments], axis=1)
@@ -146,4 +147,11 @@ def load_historical_data(ticker='AAPL'):
     return full_useful
 
 
-    # meld with price data and see if any correlations
+# meld with price data and see if any correlations
+import sys
+sys.path.append('../../scrape_ib')
+import scrape_ib
+ticker = 'TSLA'
+tsla_3min = scrape_ib.load_data(ticker)
+tsla_st = load_historical_data(ticker)
+tsla_st = tsla_st.iloc[::-1]
