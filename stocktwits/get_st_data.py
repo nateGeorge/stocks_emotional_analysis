@@ -221,9 +221,21 @@ def load_historical_data(ticker='AAPL'):
 
     # convert entities.sentiment.basic to +1 for bullish and -1 for bearish, 0 for NA
     conv_dict = {'Bearish': -1, np.nan: 0, 'Bullish': 1}
-    df['entities.sentiment.basic'] = df['entities.sentiment.basic'].replace(conv_dict)
+    full_useful.loc[:, 'entities.sentiment.basic'] = full_useful['entities.sentiment.basic'].replace(conv_dict)
 
     return full_useful
+
+
+def get_eastern_market_open_close():
+    ny = pytz.timezone('America/New_York')
+    today_ny = datetime.datetime.now(ny)
+    ndq = mcal.get_calendar('NASDAQ')
+    open_days = ndq.schedule(start_date=today_ny - pd.Timedelta(str(3*365) + ' days'), end_date=today_ny)
+    # convert times to eastern
+    for m in ['market_open', 'market_close']:
+        open_days[m] = open_days[m].dt.tz_convert('America/New_York')
+
+    return open_days
 
 
 # meld with price data and see if any correlations
@@ -237,19 +249,6 @@ tsla_st = tsla_st.iloc[::-1]  # reverse order from oldest -> newest to match IB 
 tsla_st_min = tsla_st[['entities.sentiment.basic', 'compound', 'pos', 'neg', 'neu']]
 #TWS bars are labeled by the start of the time bin, so  use label='left'
 tsla_st_min_3min = tsla_st_min.resample('3min', label='left').mean().ffill()  # forward fill because it's not frequent enough
-
-# TODO: take everything after market close and before open and make a new feature out of it??
-
-def get_eastern_market_open_close():
-    ny = pytz.timezone('America/New_York')
-    today_ny = datetime.datetime.now(ny)
-    ndq = mcal.get_calendar('NASDAQ')
-    open_days = ndq.schedule(start_date=today_ny - pd.Timedelta(str(3*365) + ' days'), end_date=today_ny)
-    # convert times to eastern
-    for m in ['market_open', 'market_close']:
-        open_days[m] = open_days[m].dt.tz_convert('America/New_York')
-
-    return open_days
 
 
 # go through each unique date, get market open and close times from IB data,
@@ -270,7 +269,7 @@ for d in unique_dates:
         last_close = open_days.loc[d]['market_open']
 
 new_feats = new_feats.T
-new_feats.columns = ['compound_closed', 'pos_closed', 'neg_closed', 'neu_closed']
+new_feats.columns = ['bearish_bullish', 'compound_closed', 'pos_closed', 'neg_closed', 'neu_closed']
 
 tsla_st_full_3min = tsla_st_min_3min.copy()
 nf_cols = new_feats.columns
@@ -279,7 +278,13 @@ for d in new_feats.index:
         tsla_st_full_3min.loc[d:d + pd.Timedelta('1D'), c] = new_feats.loc[d, c]
 
 # merge sentiment with price data
-full_tsla = pd.concat([tsla_3min, tsla_st_min_3min], axis=1)
+full_tsla = pd.concat([tsla_3min, tsla_st_full_3min], axis=1)
+full_tsla = full_tsla.loc[tsla_3min.index]
+
+# make 1h price change and 1h future price change
+full_tsla['close_1h_chg'] = full_tsla['close'].pct_change(20)  # for 3 min, 20 segments is 60 mins
+full_tsla['1h_future_price'] = full_tsla['close'].shift(-20)
+full_tsla['1h_future_price_chg'] = full_tsla['1h_future_price'].pct_change(20)
 
 
 
