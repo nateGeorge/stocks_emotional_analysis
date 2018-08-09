@@ -2,6 +2,9 @@ import os
 import time
 import pickle as pk
 
+import datetime
+import pytz
+import pandas_market_calendars as mcal
 import pandas as pd
 import numpy as np
 from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
@@ -196,14 +199,16 @@ def load_historical_data(ticker='AAPL'):
     df = pd.io.json.json_normalize(all_messages)
     # convert datetime column to datetime and set as index
     df['created_at'] = pd.to_datetime(df['created_at'])
-    tsla_st.set_index('created_at', inplace=True)
+    df.set_index('created_at', inplace=True)
+    df.index = df.index.tz_localize('UTC')
+    df.index = df.index.tz_convert('America/New_York')
     # drop empty columns
     df.drop(['entities.sentiment', 'reshare_message.message.entities.sentiment'], axis=1, inplace=True)
     # is the bearish/bullish tag
     df['entities.sentiment.basic'].value_counts()
 
     # most useful columns
-    useful_df = df[['body', 'created_at', 'entities.sentiment.basic', 'likes.total', 'user.followers']]
+    useful_df = df[['body', 'entities.sentiment.basic', 'likes.total', 'user.followers']]
 
     analyzer = SentimentIntensityAnalyzer()
     """
@@ -216,24 +221,68 @@ def load_historical_data(ticker='AAPL'):
 
     # convert entities.sentiment.basic to +1 for bullish and -1 for bearish, 0 for NA
     conv_dict = {'Bearish': -1, np.nan: 0, 'Bullish': 1}
-    tsla_st['entities.sentiment.basic'] = tsla_st['entities.sentiment.basic'].replace(conv_dict)
+    df['entities.sentiment.basic'] = df['entities.sentiment.basic'].replace(conv_dict)
 
     return full_useful
 
 
 # meld with price data and see if any correlations
-# import sys
-# sys.path.append('../../scrape_ib')
-# import scrape_ib
-# ticker = 'TSLA'
-# tsla_3min = scrape_ib.load_data(ticker)
-# tsla_st = load_historical_data(ticker)
-# tsla_st = tsla_st.iloc[::-1]  # reverse order from oldest -> newest to match IB data
-# tsla_st_min = tsla_st[['entities.sentiment.basic', 'compound', 'pos', 'neg', 'neu']]
-# #TWS bars are labeled by the start of the time bin, so  use label='left'
-# tsla_st_min_3min = tsla_st_min.resample('3min', label='left').mean()
+import sys
+sys.path.append('../../scrape_ib')
+import scrape_ib
+ticker = 'TSLA'
+tsla_3min = scrape_ib.load_data(ticker)
+tsla_st = load_historical_data(ticker)
+tsla_st = tsla_st.iloc[::-1]  # reverse order from oldest -> newest to match IB data
+tsla_st_min = tsla_st[['entities.sentiment.basic', 'compound', 'pos', 'neg', 'neu']]
+#TWS bars are labeled by the start of the time bin, so  use label='left'
+tsla_st_min_3min = tsla_st_min.resample('3min', label='left').mean().ffill()  # forward fill because it's not frequent enough
 
 # TODO: take everything after market close and before open and make a new feature out of it??
+
+def get_eastern_market_open_close():
+    ny = pytz.timezone('America/New_York')
+    today_ny = datetime.datetime.now(ny)
+    ndq = mcal.get_calendar('NASDAQ')
+    open_days = ndq.schedule(start_date=today_ny - pd.Timedelta(str(3*365) + ' days'), end_date=today_ny)
+    # convert times to eastern
+    for m in ['market_open', 'market_close']:
+        open_days[m] = open_days[m].dt.tz_convert('America/New_York')
+
+    return open_days
+
+
+# go through each unique date, get market open and close times from IB data,
+# then get average of sentiment features from market closed times and add as new feature
+unique_dates = np.unique(tsla_st_min_3min.index.date)
+open_days = get_eastern_market_open_close()
+last_close = None
+# new_feats = {}
+new_feats = pd.DataFrame()
+for d in unique_dates:
+    if d in open_days.index:  # if it's a trading day...
+        open_time = open_days.loc[d]['market_open']
+        if last_close is None:
+            new_feats[d] = tsla_st_min_3min.loc[:open_time].mean()
+        else:
+            new_feats[d] = tsla_st_min_3min.loc[last_close:open_time].mean()
+
+        last_close = open_days.loc[d]['market_open']
+
+new_feats = new_feats.T
+new_feats.columns = ['compound_closed', 'pos_closed', 'neg_closed', 'neu_closed']
+
+tsla_st_full_3min = tsla_st_min_3min.copy()
+nf_cols = new_feats.columns
+for d in new_feats.index:
+    for c in nf_cols:
+        tsla_st_full_3min.loc[d:d + pd.Timedelta('1D'), c] = new_feats.loc[d, c]
+
+# merge sentiment with price data
+full_tsla = pd.concat([tsla_3min, tsla_st_min_3min], axis=1)
+
+
+
 
 # resample tsla_st to 3_min data to match 3min bars
 
