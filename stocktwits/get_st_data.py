@@ -8,8 +8,9 @@ import pandas_market_calendars as mcal
 import pandas as pd
 import numpy as np
 from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
+import dask.dataframe as dd
 
-import api
+import api  # local file in same directory
 
 
 def make_dirs(path):
@@ -181,9 +182,15 @@ def scrape_historical_data(ticker='AAPL', verbose=True, only_update_latest=False
     write_files(all_messages, filename, new_messages, new_filename, only_update_latest)
 
 
-def get_sentiments_vader(analyzer, x):
+def get_sentiments_vader(x, analyzer):
     vs = analyzer.polarity_scores(x)
     return pd.Series([vs['compound'], vs['pos'], vs['neg'], vs['neu']], index=['compound', 'pos', 'neg', 'neu'])
+
+
+def get_sentiments_vader_dask(df, analyzer):
+    vs = analyzer.polarity_scores(df['body'])
+    return pd.Series([vs['compound'], vs['pos'], vs['neg'], vs['neu']], index=['compound', 'pos', 'neg', 'neu'])
+
 
 
 def load_historical_data(ticker='AAPL'):
@@ -209,13 +216,26 @@ def load_historical_data(ticker='AAPL'):
 
     # most useful columns
     useful_df = df[['body', 'entities.sentiment.basic', 'likes.total', 'user.followers']]
+    useful_df = useful_df.sort_index(ascending=False)
 
     analyzer = SentimentIntensityAnalyzer()
     """
     https://github.com/cjhutto/vaderSentiment#about-the-scoring
     compound: most useful single metric -- average valence of each word in sentence
     """
-    sentiments = useful_df['body'].apply(lambda x: get_sentiments_vader(analyzer, x))
+    print('getting sentiments')
+    # original non-parallelized way to do it:
+    # sentiments = useful_df['body'].apply(lambda x: get_sentiments_vader(x, analyzer))
+
+    # swifter doesn't work with functions that return series right now
+    # sentiments = swiftapply(useful_df['body'], get_sentiments_vader, analyzer=analyzer)
+
+    ddata = dd.from_pandas(useful_df['body'], npartitions=8)
+    sentiments = ddata.map_partitions(lambda ddf: ddf.apply((lambda x: get_sentiments_vader(x, analyzer)))).compute(scheduler='processes')
+    # returns backwards for some reason...
+    sentiments = sentiments.iloc[::-1]
+    # shouldn't need to sort
+    # sentiments = sentiments.sort_index(ascending=False)
     # sentiments.hist()
     full_useful = pd.concat([useful_df, sentiments], axis=1)
 
@@ -242,6 +262,7 @@ def get_eastern_market_open_close():
 import sys
 sys.path.append('../../scrape_ib')
 import scrape_ib
+
 ticker = 'TSLA'
 tsla_3min = scrape_ib.load_data(ticker)
 tsla_st = load_historical_data(ticker)
@@ -269,7 +290,7 @@ for d in unique_dates:
         last_close = open_days.loc[d]['market_open']
 
 new_feats = new_feats.T
-new_feats.columns = ['bearish_bullish', 'compound_closed', 'pos_closed', 'neg_closed', 'neu_closed']
+new_feats.columns = ['bearish_bullish_closed', 'compound_closed', 'pos_closed', 'neg_closed', 'neu_closed']
 
 tsla_st_full_3min = tsla_st_min_3min.copy()
 nf_cols = new_feats.columns
@@ -281,16 +302,52 @@ for d in new_feats.index:
 full_tsla = pd.concat([tsla_3min, tsla_st_full_3min], axis=1)
 full_tsla = full_tsla.loc[tsla_3min.index]
 
+# TODO: get post volume as a feature...looks like high post volume increase, high sentiment, and high short % is a good combo for incr in price (MTCH)
+
 # make 1h price change and 1h future price change
 full_tsla['close_1h_chg'] = full_tsla['close'].pct_change(20)  # for 3 min, 20 segments is 60 mins
+# full_tsla['3m_future_price'] = full_tsla['close'].shift(-1)  # sanity check
 full_tsla['1h_future_price'] = full_tsla['close'].shift(-20)
 full_tsla['1h_future_price_chg'] = full_tsla['1h_future_price'].pct_change(20)
 
+full_tsla['8h_future_price'] = full_tsla['close'].shift(-20*8)
+full_tsla['8h_future_price_chg'] = full_tsla['1h_future_price'].pct_change(20*8)
+
+# import plotting libraries
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+# plt.scatter(full_tsla['bearish_bullish_closed'], full_tsla['1h_future_price_chg'])
 
 
+f = plt.figure(figsize=(12, 12))
+sns.heatmap(full_tsla.corr(), annot=True)
+plt.tight_layout()
+
+plt.scatter(full_tsla['bearish_bullish_closed'], full_tsla['8h_future_price_chg'])
+plt.scatter(full_tsla['entities.sentiment.basic'], full_tsla['8h_future_price_chg'])
+
+plt.scatter(full_tsla['opt_vol_high'], full_tsla['8h_future_price_chg'])
+
+# when it was -0.05, strong correlation to negative returns -- all on one day, 3/28
+plt.scatter(full_tsla['compound_closed'], full_tsla['8h_future_price_chg'])
+
+
+# get daily price change and daily bearish/bullish and sentiments
+
+tsla_1d = tsla_3min.resample('1D').apply({'open': 'first',
+                                        'high': 'max',
+                                        'low': 'min',
+                                        'close': 'last'})
 
 # resample tsla_st to 3_min data to match 3min bars
 
-ticker = 'TSLA'
-scrape_historical_data(ticker, only_update_latest=True)
+# ticker = 'TSLA'
+# scrape_historical_data(ticker, only_update_latest=True)
 # scrape_historical_data(ticker, only_update_latest=False)
+
+tickers = ['AMD', 'IQ', 'LNG', 'MU', 'SNAP', 'MTCH']
+for t in tickers:
+    print('scraping', t)
+    scrape_historical_data(t)
+    # time.sleep(60 * 10)
