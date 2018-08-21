@@ -149,7 +149,11 @@ def scrape_historical_data(ticker='AAPL', verbose=True, only_update_latest=False
                 print('getting more data, made', str(num_calls), 'calls so far')
                 print(str(req_left), 'requests left')
             time_elapsed = time.time() - start
-            if req_left < 2:  # or (time_elapsed < 3600 and num_calls > 398)
+            if req_left is None:
+                print('requests left is None, probably need to wait longer...')
+                time.sleep(5 * 60)
+                continue
+            elif req_left < 2:  # or (time_elapsed < 3600 and num_calls > 398)
                 print('made too many calls too fast, need to change access token or')
                 print('wait another', str(round((3600 - time_elapsed) / 60)), 'minutes')
                 print('made', str(num_calls), 'calls in', str(round(time_elapsed)), 'seconds')
@@ -469,30 +473,50 @@ def plot_combined_data(full_df):
 # no messages
 # ['XLM']
 
-def update_lots_of_tickers():
-    tickers = ['AMD', 'IQ', 'MU', 'SNAP', 'MTCH', 'BTC', 'ETH', 'ETH.X',
-                'SPY', 'BABA', 'TVIX', 'OSTK', 'MU', 'QQQ', 'SNAP', 'TTD', 'VKTX',
-                'OMER', 'OLED', 'TSLA', 'LNG']
 
-    tickers =  tickers + ['ALNY', 'OMER', 'FOLD', 'RDFN', 'TUR', 'TXMD', 'TDOC', 'SQ',
-                'PYPL', 'ADBE', 'FB', 'BOX', 'Z', 'TGT', 'FMC', 'KIRK', 'FTD',
-                'ABEV', 'GE', 'F', 'TTT', 'DDD', 'VSAT', 'TKC', 'NWSA']
+def get_stock_watchlist(update=True):
+    """
+    gets trending stocks and saves to pickle file of stocks to monitor
+    """
+    # original list I started with
+    # tickers = ['CRON', 'AMD', 'IQ', 'MU', 'SNAP', 'MTCH', 'BTC', 'ETH', 'ETH.X',
+    #             'SPY', 'BABA', 'TVIX', 'OSTK', 'MU', 'QQQ', 'SNAP', 'TTD', 'VKTX',
+    #             'OMER', 'OLED', 'TSLA', 'LNG', 'ALNY', 'OMER', 'FOLD', 'RDFN',
+    #             'TUR', 'TXMD', 'TDOC', 'SQ',
+    #             'PYPL', 'ADBE', 'FB', 'BOX', 'Z', 'TGT', 'FMC', 'KIRK', 'FTD',
+    #             'ABEV', 'GE', 'F', 'TTT', 'DDD', 'VSAT', 'TKC', 'NWSA']
+
+    filename = 'tickers_watching.pk'
+    cur_tickers = []
+    if os.path.exists(filename):
+        cur_tickers = pk.load(open(filename, 'rb'))
+
+    if update:
+        trending = None
+        while trending is None:
+            trending = api.get_trending_stocks()
+            time.sleep(10)
+
+        # only unique tickers
+        tickers = sorted(list(set(cur_tickers + trending)))
+        pk.dump(tickers, open(filename, 'wb'), -1)  # use highest available pk protocol
+        return tickers
+    else:
+        return cur_tickers
+
+
+def update_lots_of_tickers():
+    tickers = get_stock_watchlist()
     while True:
         for t in tickers:
             print('scraping', t)
             scrape_historical_data(t)
             scrape_historical_data(t, only_update_latest=True)
-    #         time.sleep(60 * 10)
 
 
-# scrape_historical_data('TSLA', only_update_latest=True)
-#
 # # find large gap in data for missing intermediate data
 # tsla = load_historical_data('TSLA')
 # index_diff = tsla.index[:-1] - tsla.index[1:]
 # max_diff_idx = np.argmax(index_diff)
 # tsla.iloc[max_diff_idx]
 # tsla.iloc[max_diff_idx + 1]
-
-
-# TODO:
