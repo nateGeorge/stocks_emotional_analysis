@@ -173,6 +173,8 @@ def scrape_historical_data(ticker='AAPL', verbose=True, only_update_latest=False
             elif st is False:
                 print('tried all access tokens, sleeping for 5 mins')
                 time.sleep(5*60)
+                st = {'cursor': {'more': True}}
+                continue
 
             if only_update_latest:
                 if check_new_data(latest, st, all_messages, new_messages, filename, new_filename):
@@ -322,9 +324,9 @@ def combine_with_price_data(ticker='TSLA'):
 
     # count column is all 0s for some reason
     st_daily_std.drop('count', inplace=True, axis=1)
-    st_daily_std.columns = [c + '_std' for c in tsla_st_daily_std.columns]
+    st_daily_std.columns = [c + '_std' for c in st_daily_std.columns]
 
-    # tsla_st_daily_full = pd.concat([tsla_st_daily, tsla_st_daily_std], axis=1)
+    # st_daily_full = pd.concat([st_daily, st_daily_std], axis=1)
     trades_1d = trades_3min.resample('1D').apply({'open': 'first',
                                             'high': 'max',
                                             'low': 'min',
@@ -346,28 +348,70 @@ def combine_with_price_data(ticker='TSLA'):
     # make new feature for sentiment action over weekends and closed days
     # monday = 0, sunday = 6
     # TODO:
-    weekend_feats = pd.DataFrame()
-    temp_feats = pd.DataFrame()
-    for i in st_daily.index:
-        if i not in trades_1d.index:
-            temp_feats
+    # weekend_feats = pd.DataFrame()
+    # temp_feats = pd.DataFrame()
+    # for i in st_daily.index:
+    #     if i not in trades_1d.index:
+    #         temp_feats
 
 
     full_daily = pd.concat([trades_1d, st_daily, st_daily_std], axis=1)
+    future_price_chg_cols = []
     for i in range(1, 11):
         full_daily[str(i) + 'd_future_price'] = full_daily['close'].shift(-i)
         full_daily[str(i) + 'd_future_price_chg_pct'] = full_daily[str(i) + 'd_future_price'].pct_change(i)
+        future_price_chg_cols.append(str(i) + 'd_future_price_chg_pct')
         # drop future price column because we care about % change
         full_daily.drop(str(i) + 'd_future_price', axis=1, inplace=True)
 
 
-
+    non_price_chg_cols = [c for c in full_daily.columns if c not in future_price_chg_cols]
     f = plt.figure(figsize=(20, 20))
-    sns.heatmap(full_daily.corr(), annot=True)
+    sns.heatmap(full_daily.corr().loc[non_price_chg_cols, future_price_chg_cols], annot=True)
     plt.tight_layout()
+
+    ######### try some ML
+    from sklearn.ensemble import RandomForestRegressor
+
+    rfr = RandomForestRegressor(n_estimators=500, random_state=42, n_jobs=-1, max_depth=10, min_samples_split=4)
+    nona = full_daily.dropna()
+    feat_cols = ['entities.sentiment.basic', 'compound', 'pos', 'neg', 'neu', 'count', 'entities.sentiment.basic_std', 'compound_std']
+    feats = nona[feat_cols]
+    # 3d seems to be best for IQ
+    targs = nona['3d_future_price_chg_pct']#nona[future_price_chg_cols]
+    tr_idx = int(0.8 * feats.shape[0])
+    tr_feats = feats[:tr_idx]
+    tr_targs = targs[:tr_idx]
+    te_feats = feats[tr_idx:]
+    te_targs = targs[tr_idx:]
+
+    rfr.fit(tr_feats, tr_targs)
+    print(rfr.score(tr_feats, tr_targs))
+    print(rfr.score(te_feats, te_targs))
+    tr_preds = rfr.predict(tr_feats)
+    te_preds = rfr.predict(te_feats)
+
+    plt.scatter(tr_targs, tr_preds, label='train')
+    plt.scatter(te_targs, te_preds, label='test')
+
+    feat_imps = rfr.feature_importances_
+    feat_idx = np.argsort(feat_imps)[::-1]
+    x = range(len(feat_imps))
+    plt.bar(x, feat_imps[feat_idx])
+    plt.xticks(x, feats.columns[feat_idx], rotation=90)
+    plt.tight_layout()
+
+    # get feature importances
+
 
     # slight positive correlation
     plt.scatter(full_daily['entities.sentiment.basic_std'], full_daily['10d_future_price_chg_pct'])
+
+    plt.scatter(full_daily['opt_vol_close'], full_daily['10d_future_price_chg_pct'])
+
+    plt.scatter(full_daily['count'], full_daily['10d_future_price_chg_pct'])
+
+    plt.scatter(full_daily['compound'], full_daily['1d_future_price_chg_pct'])
 
     plt.scatter(full_daily['entities.sentiment.basic'], full_daily['10d_future_price_chg_pct'])
 
@@ -409,7 +453,7 @@ def plot_combined_data(full_df):
     # get daily price change and daily bearish/bullish and sentiments
 
     # don't think I nede this anymore
-    # tsla_1d = tsla_3min.resample('1D').apply({'open': 'first',
+    # trades_1d = trades_3min.resample('1D').apply({'open': 'first',
     #                                         'high': 'max',
     #                                         'low': 'min',
     #                                         'close': 'last'})
@@ -421,23 +465,24 @@ def plot_combined_data(full_df):
 # scrape_historical_data(ticker, only_update_latest=False)
 
 # reached end of data
-['LNG', 'IQ', ]
 
 # no messages
-['XLM']
+# ['XLM']
 
-# tickers = ['AMD', 'IQ', 'MU', 'SNAP', 'MTCH', 'BTC', 'ETH', 'ETH.X'
-#             'SPY', 'BABA', 'TVIX', 'OSTK', 'MU', 'QQQ', 'SNAP', 'TTD', 'VKTX',
-#             'OMER', 'OLED']
-#
-# tickers =  tickers + ['ALNY', 'OMER', 'FOLD', 'RDFN', 'TUR', 'TXMD', 'TDOC', 'SQ',
-#             'PYPL', 'ADBE', 'FB', 'BOX', 'Z', 'TGT', 'FMC', 'KIRK', 'FTD',
-#             'ABEV', 'GE', 'F', 'TTT', 'DDD', 'VSAT', 'TKC', 'NWSA']
-# while True:
-#     for t in tickers:
-#         print('scraping', t)
-#         scrape_historical_data(t)
-#         time.sleep(60 * 10)
+def update_lots_of_tickers():
+    tickers = ['AMD', 'IQ', 'MU', 'SNAP', 'MTCH', 'BTC', 'ETH', 'ETH.X',
+                'SPY', 'BABA', 'TVIX', 'OSTK', 'MU', 'QQQ', 'SNAP', 'TTD', 'VKTX',
+                'OMER', 'OLED', 'TSLA', 'LNG']
+
+    tickers =  tickers + ['ALNY', 'OMER', 'FOLD', 'RDFN', 'TUR', 'TXMD', 'TDOC', 'SQ',
+                'PYPL', 'ADBE', 'FB', 'BOX', 'Z', 'TGT', 'FMC', 'KIRK', 'FTD',
+                'ABEV', 'GE', 'F', 'TTT', 'DDD', 'VSAT', 'TKC', 'NWSA']
+    while True:
+        for t in tickers:
+            print('scraping', t)
+            scrape_historical_data(t)
+            scrape_historical_data(t, only_update_latest=True)
+    #         time.sleep(60 * 10)
 
 
 # scrape_historical_data('TSLA', only_update_latest=True)
@@ -448,3 +493,6 @@ def plot_combined_data(full_df):
 # max_diff_idx = np.argmax(index_diff)
 # tsla.iloc[max_diff_idx]
 # tsla.iloc[max_diff_idx + 1]
+
+
+# TODO:
