@@ -10,6 +10,9 @@ import numpy as np
 from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 import dask.dataframe as dd
 # from swifter import swiftapply
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.model_selection import ParameterGrid
+from tqdm import tqdm
 
 import api  # local file in same directory
 
@@ -148,10 +151,18 @@ def scrape_historical_data(ticker='AAPL', verbose=True, only_update_latest=False
             if verbose:
                 print('getting more data, made', str(num_calls), 'calls so far')
                 print(str(req_left), 'requests left')
+
             time_elapsed = time.time() - start
+            st, req_left, reset_time = api.get_stock_stream(ticker, {'max': earliest})
             if req_left is None:
                 print('requests left is None, probably need to wait longer...')
                 time.sleep(5 * 60)
+                st = {'cursor': {'more': True}}
+                continue
+            elif req_left is False:
+                print('requests left is False, probably need to wait longer...')
+                time.sleep(5 * 60)
+                st = {'cursor': {'more': True}}
                 continue
             elif req_left < 2:  # or (time_elapsed < 3600 and num_calls > 398)
                 print('made too many calls too fast, need to change access token or')
@@ -167,7 +178,6 @@ def scrape_historical_data(ticker='AAPL', verbose=True, only_update_latest=False
                 num_calls = 0
 
             earliest = st['cursor']['max']
-            st, req_left, reset_time = api.get_stock_stream(ticker, {'max': earliest})
             if st is None:
                 print('returned None for some reason')
                 # overwrite old data with updated data
@@ -210,8 +220,7 @@ def get_sentiments_vader_dask(df, analyzer):
     return pd.Series([vs['compound'], vs['pos'], vs['neg'], vs['neu']], index=['compound', 'pos', 'neg', 'neu'])
 
 
-
-def load_historical_data(ticker='AAPL'):
+def load_historical_data(ticker='AAPL', must_be_up_to_date=False):
     filepath = get_home_dir() + 'stocktwits/data/' + ticker + '/'
     filename = filepath + ticker + '_all_messages.pk'
     if os.path.exists(filename):
@@ -227,6 +236,13 @@ def load_historical_data(ticker='AAPL'):
     df.set_index('created_at', inplace=True)
     df.index = df.index.tz_localize('UTC')
     df.index = df.index.tz_convert('America/New_York')
+
+    # check if data up to date
+    if must_be_up_to_date:
+        up_to_date = check_if_data_up_to_date(df.index[-1].date())
+        if not up_to_date:
+            return None
+
     # drop empty columns
     df.drop(['entities.sentiment', 'reshare_message.message.entities.sentiment'], axis=1, inplace=True)
     # is the bearish/bullish tag
@@ -276,10 +292,28 @@ def get_eastern_market_open_close():
     return open_days
 
 
+def check_if_data_up_to_date(latest_data_date):
+    ny = pytz.timezone('America/New_York')
+    today_ny = datetime.datetime.now(ny)
+    if latest_data_date.date() != today_ny.date():
+        open_days = get_eastern_market_open_close()
+        # if not same day as NY date, check if NY time is before market close
+        if today_ny >= open_days.iloc[-1]['market_close']:
+            print("data not up to todays date")
+            return False
+
+    return True
+
+
 def combine_with_price_data(ticker='TSLA'):
     # meld with price data and see if any correlations
     trades_3min = scrape_ib.load_data(ticker)  # by default loads 3 mins bars
-    st = load_historical_data(ticker)  # get stock twits data
+    # check if data up to date, first check if data is same day as NY date
+    up_to_date = check_if_data_up_to_date(trades_3min.index[-1].date())
+    if not up_to_date:
+        return None, None, None
+
+    st = load_historical_data(ticker, must_be_up_to_date=True)  # get stock twits data
     st = st.iloc[::-1]  # reverse order from oldest -> newest to match IB data
     # create counts column for resampling
     st['count'] = 1
@@ -318,19 +352,47 @@ def combine_with_price_data(ticker='TSLA'):
             st_full_3min.loc[d:d + pd.Timedelta('1D'), c] = new_feats.loc[d, c]
 
     # merge sentiment with price data
-    full_df = pd.concat([trades_3min, st_full_3min], axis=1)
-    full_df = full_df.loc[trades_3min.index]
+    full_3min = pd.concat([trades_3min, st_full_3min], axis=1)
+    full_3min = full_3min.loc[trades_3min.index]
+    # make 1h price change and 1h future price change
+    full_3min['close_1h_chg'] = full_3min['close'].pct_change(20)  # for 3 min, 20 segments is 60 mins
+    # full_tsla['3m_future_price'] = full_tsla['close'].shift(-1)  # sanity check
+    full_3min['1h_future_price'] = full_3min['close'].shift(-20)
+    full_3min['1h_future_price_chg'] = full_3min['1h_future_price'].pct_change(20)
+
+    full_3min['8h_future_price'] = full_3min['close'].shift(-20*8)
+    full_3min['8h_future_price_chg'] = full_3min['1h_future_price'].pct_change(20*8)
+
 
     # resample to daily frequency
+    # weekdays : monday = 0, sunday = 6
     st_daily = st_min.resample('1D', label='left').mean().ffill()
+    st_weekend = st_min[st_min.index.weekday.isin(set([5, 6]))]
+    st_daily_weekend = st_weekend.resample('W-MON', label='right').mean()
     st_daily['count'] = st_min['count'].resample('1D', label='left').sum().ffill()
+    st_daily_weekend['count'] = st_weekend['count'].resample('W-MON', label='right').sum().ffill()
     st_daily_std = st_min.resample('1D', label='left').std().ffill()
+    st_daily_weekend_std = st_weekend.resample('W-MON', label='right').std().ffill()
 
-    # count column is all 0s for some reason
+    # count column is all 0s
     st_daily_std.drop('count', inplace=True, axis=1)
-    st_daily_std.columns = [c + '_std' for c in st_daily_std.columns]
+    st_daily_weekend_std.drop('count', inplace=True, axis=1)
 
-    # st_daily_full = pd.concat([st_daily, st_daily_std], axis=1)
+    # rename columns for clarity
+    st_daily_std.columns = [c + '_std' for c in st_daily_std.columns]
+    st_daily_weekend.columns = [c + '_weekend' for c in st_daily_weekend.columns]
+    st_daily_weekend_std.columns = [c + '_weekend_std' for c in st_daily_weekend_std.columns]
+
+
+    # combine regular sentiment and standard deviation dataframes
+    st_daily_full = pd.concat([st_daily, st_daily_std], axis=1)
+    # get rid of weekend days in resampled data
+    to_drop_idxs = st_daily_full[st_daily_full.index.weekday.isin(set([5, 6]))].index
+    st_daily_full.drop(to_drop_idxs, inplace=True)
+    # add weekend data to daily df
+    st_daily_full = pd.concat([st_daily_full, st_daily_weekend, st_daily_weekend_std], axis=1).ffill().dropna()
+
+
     trades_1d = trades_3min.resample('1D').apply({'open': 'first',
                                             'high': 'max',
                                             'low': 'min',
@@ -349,94 +411,295 @@ def combine_with_price_data(ticker='TSLA'):
                                             'opt_vol_low': 'min',
                                             'opt_vol_close': 'last'})
 
-    # make new feature for sentiment action over weekends and closed days
-    # monday = 0, sunday = 6
-    # TODO:
-    # weekend_feats = pd.DataFrame()
-    # temp_feats = pd.DataFrame()
-    # for i in st_daily.index:
-    #     if i not in trades_1d.index:
-    #         temp_feats
+    # ignore weekends
+    trades_1d = trades_1d[trades_1d.index.weekday.isin(set(range(5)))]
 
 
-    full_daily = pd.concat([trades_1d, st_daily, st_daily_std], axis=1)
+
+    full_daily = pd.concat([trades_1d, st_daily_full], axis=1)
     future_price_chg_cols = []
     for i in range(1, 11):
-        full_daily[str(i) + 'd_future_price'] = full_daily['close'].shift(-i)
-        full_daily[str(i) + 'd_future_price_chg_pct'] = full_daily[str(i) + 'd_future_price'].pct_change(i)
+        full_daily[str(i) + 'd_price_chg_pct'] = full_daily['close'].pct_change(i)
+        full_daily[str(i) + 'd_future_price_chg_pct'] = full_daily[str(i) + 'd_price_chg_pct'].shift(-i)
+        # full_daily[str(i) + 'd_future_price_chg_pct'] = full_daily[str(i) + 'd_future_price'].pct_change(i)
         future_price_chg_cols.append(str(i) + 'd_future_price_chg_pct')
         # drop future price column because we care about % change
-        full_daily.drop(str(i) + 'd_future_price', axis=1, inplace=True)
+        # full_daily.drop(str(i) + 'd_future_price', axis=1, inplace=True)
 
 
-    non_price_chg_cols = [c for c in full_daily.columns if c not in future_price_chg_cols]
-    f = plt.figure(figsize=(20, 20))
-    sns.heatmap(full_daily.corr().loc[non_price_chg_cols, future_price_chg_cols], annot=True)
-    plt.tight_layout()
+    return full_3min, full_daily, future_price_chg_cols
 
-    ######### try some ML
-    from sklearn.ensemble import RandomForestRegressor
 
-    rfr = RandomForestRegressor(n_estimators=500, random_state=42, n_jobs=-1, max_depth=10, min_samples_split=4)
+def get_param_grid(num_feats):
+    # get auto setting for max_features
+    auto = int(np.sqrt(num_feats))
+    auto_1_2 = auto // 2
+    auto_to_max = num_feats - auto
+    step_size = auto_to_max // 3
+    max_features = list(range(auto, num_feats + 1, step_size))
+
+    grid = ParameterGrid({
+                        'n_estimators': [500],
+                        'random_state': [42],
+                        'n_jobs': [-1],
+                        'max_depth': [3, 7, 12, 25],
+                        'min_samples_split': [2, 4, 6, 8, 10],
+                        'max_features': ['auto', auto_1_2,] + max_features
+                        })
+    return grid
+
+
+def get_tr_test_feats_targs(full_daily, feats_cols, future_price_chg_cols, future_days_prediction, tr_size=0.8):
+    # ignore highly correlated columns -- bid and ask correlated with open/close/hi/low
+    # opt_vol_open and close correlated, and correlated to opt_vol_low
+    feats_cols_trimmed = [f for f in feats_cols if 'ask' not in f and 'bid' not in f and 'opt_vol_open' not in f]
+    ignore_cols = set(['2d_price_chg_pct', '4d_price_chg_pct', '6d_price_chg_pct',
+                    '7d_price_chg_pct', '8d_price_chg_pct', '9d_price_chg_pct'])
+    feats_cols_trimmed = [f for f in feats_cols_trimmed if f not in ignore_cols]
     nona = full_daily.dropna()
-    feat_cols = ['entities.sentiment.basic', 'compound', 'pos', 'neg', 'neu', 'count', 'entities.sentiment.basic_std', 'compound_std']
-    feats = nona[feat_cols]
+    feats = nona[feats_cols_trimmed]
     # 3d seems to be best for IQ
-    targs = nona['3d_future_price_chg_pct']#nona[future_price_chg_cols]
-    tr_idx = int(0.8 * feats.shape[0])
+    targs = nona[[str(f) + 'd_future_price_chg_pct' for f in future_days_prediction]]
+    tr_idx = int(tr_size * feats.shape[0])
     tr_feats = feats[:tr_idx]
-    tr_targs = targs[:tr_idx]
     te_feats = feats[tr_idx:]
+    tr_targs = targs[:tr_idx]
     te_targs = targs[tr_idx:]
 
+    return tr_feats, te_feats, tr_targs, te_targs
+
+
+def ml_on_combined_data(ticker, full_daily, future_price_chg_cols, show_tr_test=True, show_feat_imps=True):
+    ######### try some ML
+    # save best hyperparameters and other info
+    todays_date = datetime.datetime.today().date().strftime('%Y-%m-%d')
+    best_hyperparams_filename = 'best_hyperparams_daily_rf_{}.pk'.format(todays_date)
+    cur_best_hyperparams = {}
+    if os.path.exists(best_hyperparams_filename):
+        cur_best_hyperparams = pk.load(open(best_hyperparams_filename, 'rb'))
+
+    future_days_prediction = [2, 3, 5, 10]
+    non_price_chg_cols = [c for c in full_daily.columns if c not in future_price_chg_cols]
+    tr_feats, te_feats, tr_targs, te_targs = get_tr_test_feats_targs(full_daily, non_price_chg_cols, future_price_chg_cols, future_days_prediction)
+    # gridsearch to find best hyperparams
+
+    grid = get_param_grid(tr_feats.shape[1])
+
+    tr_scores, te_scores = [], []
+    for g in tqdm(grid):
+        rfr = RandomForestRegressor(**g)
+        rfr.fit(tr_feats, tr_targs)
+        tr_scores.append(rfr.score(tr_feats, tr_targs))
+        te_scores.append(rfr.score(te_feats, te_targs))
+
+    best_idx = np.argmax(te_scores)
+    print('best score on test:', str(te_scores[best_idx]))
+
+    cur_best_hyperparams[ticker] = {}
+    cur_best_hyperparams[ticker]['date_range'] = (tr_feats.index[0], te_feats.index[-1])
+    cur_best_hyperparams[ticker]['full_features_best_hyper'] = grid[best_idx]
+
+    rfr = RandomForestRegressor(**grid[best_idx])
     rfr.fit(tr_feats, tr_targs)
-    print(rfr.score(tr_feats, tr_targs))
-    print(rfr.score(te_feats, te_targs))
+    tr_score = rfr.score(tr_feats, tr_targs)
+    te_score = rfr.score(te_feats, te_targs)
+    cur_best_hyperparams[ticker]['tr_te_scores_full_feats'] = (tr_score, te_score)
+    print('train score:', tr_score)
+    print('test score:', te_score)
+
+    if show_tr_test:
+        tr_preds = rfr.predict(tr_feats)
+        te_preds = rfr.predict(te_feats)
+        f, ax = plt.subplots(2, 2)
+        i = 0
+        for row in range(2):
+            for col in range(2):
+                ax[row][col].scatter(tr_preds[:, i], tr_targs.iloc[:, i], label='train')
+                ax[row][col].scatter(te_preds[:, i], te_targs.iloc[:, i], label='test')
+                ax[row][col].set_title(str(future_days_prediction[i]) + 'd future price pct')
+                i += 1
+
+        plt.ylabel('targets')
+        plt.xlabel('predictions')
+        plt.legend()
+        plt.suptitle('using all features')
+        plt.tight_layout()
+        plt.show()
+
+    # get feature importances
+    feat_imps = rfr.feature_importances_
+    feat_idx = np.argsort(feat_imps)[::-1]
+    cur_best_hyperparams[ticker]['feat_imps_all'] = feat_imps[feat_idx]
+    cur_best_hyperparams[ticker]['feat_names_all'] = tr_feats.columns[feat_idx]
+
+    if show_feat_imps:
+        f = plt.figure()
+        x = range(len(feat_imps))
+        plt.bar(x, feat_imps[feat_idx])
+        plt.xticks(x, tr_feats.columns[feat_idx], rotation=90)
+        plt.tight_layout()
+        plt.show()
+
+    # get cumulative sum of feature importances, only take top 90%
+    cum_sum = np.cumsum(feat_imps[feat_idx])
+    cutoff_idx = np.argmin(np.abs(cum_sum - 0.9)) + 1
+    print('selected', cutoff_idx, 'features out of', tr_feats.shape[1])
+    new_feats = tr_feats.columns[feat_idx][:cutoff_idx]
+    # 3d seems to be best for IQ
+
+    tr_feats, te_feats, tr_targs, te_targs = get_tr_test_feats_targs(full_daily, new_feats, future_price_chg_cols, future_days_prediction)
+    grid = get_param_grid(tr_feats.shape[1])
+
+    tr_scores, te_scores = [], []
+    for g in tqdm(grid):
+        rfr = RandomForestRegressor(**g)
+        rfr.fit(tr_feats, tr_targs)
+        tr_scores.append(rfr.score(tr_feats, tr_targs))
+        te_scores.append(rfr.score(te_feats, te_targs))
+
+    best_idx = np.argmax(te_scores)
+    print('best score on test:', str(te_scores[best_idx]))
+
+    cur_best_hyperparams[ticker]['trimmed_features_best_hyper'] = grid[best_idx]
+
+    rfr = RandomForestRegressor(**grid[best_idx])
+
+    rfr.fit(tr_feats, tr_targs)
+    tr_score = rfr.score(tr_feats, tr_targs)
+    te_score = rfr.score(te_feats, te_targs)
+    cur_best_hyperparams[ticker]['tr_te_scores_trimmed_feats'] = (tr_score, te_score)
+    print(tr_score)
+    print(te_score)
     tr_preds = rfr.predict(tr_feats)
     te_preds = rfr.predict(te_feats)
 
-    plt.scatter(tr_targs, tr_preds, label='train')
-    plt.scatter(te_targs, te_preds, label='test')
-
     feat_imps = rfr.feature_importances_
     feat_idx = np.argsort(feat_imps)[::-1]
-    x = range(len(feat_imps))
-    plt.bar(x, feat_imps[feat_idx])
-    plt.xticks(x, feats.columns[feat_idx], rotation=90)
-    plt.tight_layout()
+    cur_best_hyperparams[ticker]['feat_imps_trimmed'] = feat_imps[feat_idx]
+    cur_best_hyperparams[ticker]['feat_names_trimmed'] = tr_feats.columns[feat_idx]
 
-    # get feature importances
+    if show_tr_test:
+        # plot predictions vs actual
+        f, ax = plt.subplots(2, 2)
+        i = 0
+        for row in range(2):
+            for col in range(2):
+                ax[row][col].scatter(tr_preds[:, i], tr_targs.iloc[:, i], label='train')
+                ax[row][col].scatter(te_preds[:, i], te_targs.iloc[:, i], label='test')
+                ax[row][col].set_title(str(future_days_prediction[i]) + 'd future price pct')
+                i += 1
 
+        plt.ylabel('targets')
+        plt.xlabel('predictions')
+        plt.legend()
+        plt.suptitle('using trimmed features')
+        plt.tight_layout()
+        plt.show()
 
-    # slight positive correlation
-    plt.scatter(full_daily['entities.sentiment.basic_std'], full_daily['10d_future_price_chg_pct'])
+    # fit on full data and make prediction for current day
+    feats = np.vstack((tr_feats, te_feats))
+    targs = np.vstack((tr_targs, te_targs))
+    rfr.fit(feats, targs)
+    last_feature = full_daily[new_feats].iloc[-2:]
+    # TODO: deal with NA/infinity values (LNG)
+    newest_prediction = rfr.predict(last_feature)
+    print('latest prediction:', str(newest_prediction[-1]))
+    cur_best_hyperparams[ticker]['latest_predictions'] = newest_prediction[-1]
 
-    plt.scatter(full_daily['opt_vol_close'], full_daily['10d_future_price_chg_pct'])
+    pk.dump(cur_best_hyperparams, open(best_hyperparams_filename, 'wb'), -1)
 
-    plt.scatter(full_daily['count'], full_daily['10d_future_price_chg_pct'])
-
-    plt.scatter(full_daily['compound'], full_daily['1d_future_price_chg_pct'])
-
-    plt.scatter(full_daily['entities.sentiment.basic'], full_daily['10d_future_price_chg_pct'])
-
-    plt.scatter(full_daily['compound'], full_daily['10d_future_price_chg_pct'])
-    plt.scatter(full_daily['pos'], full_daily['10d_future_price_chg_pct'])
-
-    # get things correlated with 5d change > 0.1
-    idx_5d = np.where(full_daily.columns == '5d_future_price_chg_pct')[0][0]
-    idx_1d = np.where(full_daily.columns == '1d_future_price_chg_pct')[0][0]
-    full_daily.columns[:idx_1d][(full_daily.corr() > 0.1).iloc[:idx_1d, idx_5d]]
+    # TODO: add in short interest as feature
 
     # TODO: get post volume as a feature...looks like high post volume increase, high sentiment, and high short % is a good combo for incr in price (MTCH)
 
-    # make 1h price change and 1h future price change
-    full_df['close_1h_chg'] = full_df['close'].pct_change(20)  # for 3 min, 20 segments is 60 mins
-    # full_tsla['3m_future_price'] = full_tsla['close'].shift(-1)  # sanity check
-    full_df['1h_future_price'] = full_df['close'].shift(-20)
-    full_df['1h_future_price_chg'] = full_df['1h_future_price'].pct_change(20)
 
-    full_df['8h_future_price'] = full_df['close'].shift(-20*8)
-    full_df['8h_future_price_chg'] = full_df['1h_future_price'].pct_change(20*8)
+def fit_neural_network(full_daily, future_price_chg_cols):
+    # neural network prototyping
+    future_days_prediction = [2, 3, 5, 10]
+    non_price_chg_cols = [c for c in full_daily_baba.columns if c not in future_price_chg_cols_baba]
+    tr_feats, te_feats, tr_targs, te_targs = get_tr_test_feats_targs(full_daily, non_price_chg_cols, future_price_chg_cols, future_days_prediction, tr_size=0.9)
+
+    from sklearn.preprocessing import StandardScaler
+
+    tr_feats_sc, te_feats_sc = [], []
+    for i in range(tr_feats.shape[1]):
+        sc = StandardScaler()
+        tr_feats_sc.append(sc.fit_transform(tr_feats.iloc[:, i].values.reshape(-1, 1)))
+        te_feats_sc.append(sc.transform(te_feats.iloc[:, i].values.reshape(-1, 1)))
+
+    tr_feats_sc = np.concatenate(tr_feats_sc, axis=1)
+    te_feats_sc = np.concatenate(te_feats_sc, axis=1)
+
+    from keras.layers import Input, Dense, BatchNormalization, Dropout
+    from keras.models import Model
+    import tensorflow as tf
+    import keras.backend as K
+    import keras.losses
+
+    # custom loss with correct direction
+    def stock_loss_mae_log(y_true, y_pred):
+        alpha1 = 4.  # penalty for predicting positive but actual is negative
+        alpha2 = 4.  # penalty for predicting negative but actual is positive
+        loss = tf.where(K.less(y_true * y_pred, 0), \
+                         tf.where(K.less(y_true, y_pred), \
+                                    alpha1 * K.log(K.abs(y_true - y_pred) + 1), \
+                                    alpha2 * K.log(K.abs(y_true - y_pred) + 1)), \
+                         K.log(K.abs(y_true - y_pred) + 1))
+
+        return K.mean(loss, axis=-1)
+
+    keras.losses.stock_loss_mae_log = stock_loss_mae_log
+
+
+    # works decently on BABA stock currently (8-22-2018) with 872 tr samples
+    inputs = Input(shape=(tr_feats.shape[1],))
+
+    # a layer instance is callable on a tensor, and returns a tensor
+    # x = BatchNormalization()(inputs)
+    x = Dense(1000, activation='elu')(inputs)
+    x = BatchNormalization()(x)
+    x = Dropout(0.5)(x)
+    x = Dense(500, activation='elu')(x)
+    x = BatchNormalization()(x)
+    x = Dropout(0.5)(x)
+    x = Dense(250, activation='elu')(x)
+    x = BatchNormalization()(x)
+    x = Dropout(0.3)(x)
+    x = Dense(100, activation='elu')(x)
+    x = BatchNormalization()(x)
+    x = Dropout(0.3)(x)
+    x = Dense(20, activation='elu')(x)
+    x = BatchNormalization()(x)
+    x = Dropout(0.1)(x)
+    predictions = Dense(tr_targs.shape[1], activation='linear')(x)
+
+    model = Model(inputs=inputs, outputs=predictions)
+    model.compile(optimizer='adam',
+                  loss='mae')
+    model.fit(tr_feats_sc, tr_targs, epochs=2000, batch_size=2000)
+
+    tr_preds = model.predict(tr_feats_sc)
+    te_preds = model.predict(te_feats_sc)
+    # plot predictions vs actual
+    f, ax = plt.subplots(2, 2)
+    i = 0
+    for row in range(2):
+        for col in range(2):
+            ax[row][col].scatter(tr_preds[:, i], tr_targs.iloc[:, i], label='train')
+            ax[row][col].scatter(te_preds[:, i], te_targs.iloc[:, i], label='test')
+            ax[row][col].set_title(str(future_days_prediction[i]) + 'd future price pct')
+            i += 1
+
+    plt.ylabel('targets')
+    plt.xlabel('predictions')
+    plt.legend()
+    plt.tight_layout()
+    plt.show()
+
+
+
+def examine_autocorrelations():
+    pass
 
 
 def plot_combined_data(full_df):
@@ -453,6 +716,33 @@ def plot_combined_data(full_df):
     # when it was -0.05, strong correlation to negative returns -- all on one day, 3/28
     plt.scatter(full_df['compound_closed'], full_df['8h_future_price_chg'])
 
+
+    non_price_chg_cols = [c for c in full_daily.columns if c not in future_price_chg_cols]
+    f = plt.figure(figsize=(20, 20))
+    sns.heatmap(full_daily.corr().loc[non_price_chg_cols, future_price_chg_cols], annot=True)
+    plt.tight_layout()
+
+
+    # slight positive correlation
+    plt.scatter(full_daily['entities.sentiment.basic_std'], full_daily['10d_future_price_chg_pct'])
+
+    plt.scatter(full_daily['pos_weekend_std'], full_daily['10d_future_price_chg_pct'])
+
+    plt.scatter(full_daily['opt_vol_close'], full_daily['10d_future_price_chg_pct'])
+
+    plt.scatter(full_daily['count'], full_daily['10d_future_price_chg_pct'])
+
+    plt.scatter(full_daily['compound'], full_daily['1d_future_price_chg_pct'])
+
+    plt.scatter(full_daily['entities.sentiment.basic'], full_daily['10d_future_price_chg_pct'])
+
+    plt.scatter(full_daily['compound'], full_daily['10d_future_price_chg_pct'])
+    plt.scatter(full_daily['pos'], full_daily['10d_future_price_chg_pct'])
+
+    # get things correlated with 5d change > 0.1
+    idx_5d = np.where(full_daily.columns == '5d_future_price_chg_pct')[0][0]
+    idx_1d = np.where(full_daily.columns == '1d_future_price_chg_pct')[0][0]
+    full_daily.columns[:idx_1d][(full_daily.corr() > 0.1).iloc[:idx_1d, idx_5d]]
 
     # get daily price change and daily bearish/bullish and sentiments
 
@@ -483,6 +773,12 @@ def get_stock_watchlist(update=True):
     #             'SPY', 'BABA', 'TVIX', 'OSTK', 'MU', 'QQQ', 'SNAP', 'TTD', 'VKTX',
     #             'OMER', 'OLED', 'TSLA', 'LNG', 'ALNY', 'OMER', 'FOLD', 'RDFN',
     #             'TUR', 'TXMD', 'TDOC', 'SQ',
+    #             'PYPL', 'ADBE', 'FB', 'BOX', 'Z', 'TGT', 'FMC', 'KIRK', 'FTD',
+    #             'ABEV', 'GE', 'F', 'TTT', 'DDD', 'VSAT', 'TKC', 'NWSA']
+
+    # list from scrape_ib
+    # tickers = ['CRON', 'ADBE', 'ROKU', 'PLNT', 'BDSI', 'MTCH', 'DBX', 'FNKO', 'OSTK', 'SPY', 'BABA', 'MU', 'QQQ', 'SNAP', 'TTD', 'VKTX', 'OMER', 'OLED']
+    # tickers =  tickers + ['ALNY', 'OMER', 'FOLD', 'RDFN', 'TUR', 'TXMD', 'TDOC', 'SQ',
     #             'PYPL', 'ADBE', 'FB', 'BOX', 'Z', 'TGT', 'FMC', 'KIRK', 'FTD',
     #             'ABEV', 'GE', 'F', 'TTT', 'DDD', 'VSAT', 'TKC', 'NWSA']
 
