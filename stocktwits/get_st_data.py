@@ -98,6 +98,7 @@ def scrape_historical_data(ticker='AAPL', verbose=True, only_update_latest=False
     if not os.path.exists(filepath): make_dirs(filepath)
     filename = filepath + ticker + '_all_messages.pk'
     new_filename = filepath + ticker + '_new_messages.pk'  # for new data when updating
+    if os.path.exists(new_filename): os.remove(new_filename)
     if os.path.exists(filename):
         print("existing file")
         with open(filename, 'rb') as f:
@@ -207,7 +208,8 @@ def scrape_historical_data(ticker='AAPL', verbose=True, only_update_latest=False
             break
 
     # write data with updates
-    write_files(all_messages, filename, new_messages, new_filename, only_update_latest)
+    all_messages = new_messages + all_messages
+    write_files(all_messages, filename, new_messages, new_filename, only_update_latest=False)
 
 
 def get_sentiments_vader(x, analyzer):
@@ -236,12 +238,18 @@ def load_historical_data(ticker='AAPL', must_be_up_to_date=False):
     df.set_index('created_at', inplace=True)
     df.index = df.index.tz_localize('UTC')
     df.index = df.index.tz_convert('America/New_York')
+    # orig_num_samples = df.shape[0]
+    # df.drop_duplicates(inplace=True)
+    # print('dropped', df.shape[0] - orig_num_samples, 'duplicates')
 
     # check if data up to date
-    if must_be_up_to_date:
-        up_to_date = check_if_data_up_to_date(df.index[-1].date())
-        if not up_to_date:
+    up_to_date = check_if_data_up_to_date(df.index[0].date())
+    if not up_to_date:
+        print('stocktwits data not up to date')
+        if must_be_up_to_date:
             return None
+    else:
+        print('stocktwits data up to date')
 
     # drop empty columns
     df.drop(['entities.sentiment', 'reshare_message.message.entities.sentiment'], axis=1, inplace=True)
@@ -249,7 +257,8 @@ def load_historical_data(ticker='AAPL', must_be_up_to_date=False):
     df['entities.sentiment.basic'].value_counts()
 
     # most useful columns
-    useful_df = df[['body', 'entities.sentiment.basic', 'likes.total', 'user.followers']]
+    useful_df = df.loc[:, ['body', 'entities.sentiment.basic', 'likes.total', 'user.followers']]
+    useful_df.drop_duplicates(inplace=True)
     useful_df = useful_df.sort_index(ascending=False)
 
     analyzer = SentimentIntensityAnalyzer()
@@ -274,7 +283,9 @@ def load_historical_data(ticker='AAPL', must_be_up_to_date=False):
     full_useful = pd.concat([useful_df, sentiments], axis=1)
 
     # convert entities.sentiment.basic to +1 for bullish and -1 for bearish, 0 for NA
-    conv_dict = {'Bearish': -1, np.nan: 0, 'Bullish': 1}
+    conv_dict = {'Bearish': -1, 'Bullish': 1}  # thinking it's best to leave np.nan in there
+    conv_dict2 = {'Bearish': -1, np.nan: 0, 'Bullish': 1}
+    full_useful.loc[:, 'entities.sentiment.basic.nona'] = full_useful['entities.sentiment.basic'].replace(conv_dict2)
     full_useful.loc[:, 'entities.sentiment.basic'] = full_useful['entities.sentiment.basic'].replace(conv_dict)
 
     return full_useful
@@ -295,7 +306,7 @@ def get_eastern_market_open_close():
 def check_if_data_up_to_date(latest_data_date):
     ny = pytz.timezone('America/New_York')
     today_ny = datetime.datetime.now(ny)
-    if latest_data_date.date() != today_ny.date():
+    if latest_data_date != today_ny.date():
         open_days = get_eastern_market_open_close()
         # if not same day as NY date, check if NY time is before market close
         if today_ny >= open_days.iloc[-1]['market_close']:
@@ -305,21 +316,28 @@ def check_if_data_up_to_date(latest_data_date):
     return True
 
 
-def combine_with_price_data(ticker='TSLA'):
+def combine_with_price_data(ticker='TSLA', must_be_up_to_date=True):
     # meld with price data and see if any correlations
     trades_3min = scrape_ib.load_data(ticker)  # by default loads 3 mins bars
     # check if data up to date, first check if data is same day as NY date
-    up_to_date = check_if_data_up_to_date(trades_3min.index[-1].date())
-    if not up_to_date:
+    if must_be_up_to_date:
+        up_to_date = check_if_data_up_to_date(trades_3min.index[-1].date())
+        if not up_to_date:
+            print('price data not up to date')
+            return None, None, None
+
+    st = load_historical_data(ticker, must_be_up_to_date=must_be_up_to_date)  # get stock twits data
+    if st is None:  # data is not up to date
+        print('stocktwits data not up to date')
         return None, None, None
 
-    st = load_historical_data(ticker, must_be_up_to_date=True)  # get stock twits data
     st = st.iloc[::-1]  # reverse order from oldest -> newest to match IB data
     # create counts column for resampling
     st['count'] = 1
-    st_min = st[['entities.sentiment.basic', 'compound', 'pos', 'neg', 'neu', 'count']]
+    st_min = st[['entities.sentiment.basic', 'entities.sentiment.basic.nona', 'compound', 'pos', 'neg', 'neu', 'count']]
     #TWS bars are labeled by the start of the time bin, so  use label='left'
     st_min_3min = st_min.resample('3min', label='left').mean().ffill()  # forward fill because it's not frequent enough
+
     st_min_3min['count'] = st['count'].resample('3min', label='left').sum().ffill()
 
 
@@ -343,7 +361,7 @@ def combine_with_price_data(ticker='TSLA'):
             last_close = open_days.loc[d]['market_open']
 
     new_feats = new_feats.T
-    new_feats.columns = ['bearish_bullish_closed', 'compound_closed', 'pos_closed', 'neg_closed', 'neu_closed', 'count_closed']
+    new_feats.columns = ['bearish_bullish_closed', 'bearish_bullish_closed.nona', 'compound_closed', 'pos_closed', 'neg_closed', 'neu_closed', 'count_closed']
 
     st_full_3min = st_min_3min.copy()
     nf_cols = new_feats.columns
@@ -367,6 +385,10 @@ def combine_with_price_data(ticker='TSLA'):
     # resample to daily frequency
     # weekdays : monday = 0, sunday = 6
     st_daily = st_min.resample('1D', label='left').mean().ffill()
+    st_daily['bear_count'] = st_min[st_min['entities.sentiment.basic'] == -1]['entities.sentiment.basic'].resample('1D', label='left').count()
+    st_daily['bull_count'] = st_min[st_min['entities.sentiment.basic'] == 1]['entities.sentiment.basic'].resample('1D', label='left').count()
+    st_daily['pos_count'] = st_min[st_min['compound'] > 0.05]['compound'].resample('1D', label='left').count()
+    st_daily['neg_count'] = st_min[st_min['compound'] < -0.05]['compound'].resample('1D', label='left').count()
     st_weekend = st_min[st_min.index.weekday.isin(set([5, 6]))]
     st_daily_weekend = st_weekend.resample('W-MON', label='right').mean()
     st_daily['count'] = st_min['count'].resample('1D', label='left').sum().ffill()
@@ -454,7 +476,7 @@ def get_tr_test_feats_targs(full_daily, feats_cols, future_price_chg_cols, futur
     # opt_vol_open and close correlated, and correlated to opt_vol_low
     feats_cols_trimmed = [f for f in feats_cols if 'ask' not in f and 'bid' not in f and 'opt_vol_open' not in f]
     ignore_cols = set(['2d_price_chg_pct', '4d_price_chg_pct', '6d_price_chg_pct',
-                    '7d_price_chg_pct', '8d_price_chg_pct', '9d_price_chg_pct'])
+                    '7d_price_chg_pct', '8d_price_chg_pct', '9d_price_chg_pct', 'open', 'high', 'low', 'close'])
     feats_cols_trimmed = [f for f in feats_cols_trimmed if f not in ignore_cols]
     nona = full_daily.dropna()
     feats = nona[feats_cols_trimmed]
@@ -697,7 +719,6 @@ def fit_neural_network(full_daily, future_price_chg_cols):
     plt.show()
 
 
-
 def examine_autocorrelations():
     pass
 
@@ -721,6 +742,7 @@ def plot_combined_data(full_df):
     f = plt.figure(figsize=(20, 20))
     sns.heatmap(full_daily.corr().loc[non_price_chg_cols, future_price_chg_cols], annot=True)
     plt.tight_layout()
+    plt.show()
 
 
     # slight positive correlation
@@ -751,6 +773,22 @@ def plot_combined_data(full_df):
     #                                         'high': 'max',
     #                                         'low': 'min',
     #                                         'close': 'last'})
+
+def plot_col_vs_pct_chg(full_daily, ticker, col='entities.sentiment.basic'):
+    f, ax = plt.subplots(2, 2)
+    ax[0][0].scatter(full_daily[col], full_daily['1d_future_price_chg_pct'], alpha=0.4)
+    ax[0][1].scatter(full_daily[col], full_daily['3d_future_price_chg_pct'], alpha=0.4)
+    ax[1][0].scatter(full_daily[col], full_daily['5d_future_price_chg_pct'], alpha=0.4)
+    ax[1][1].scatter(full_daily[col], full_daily['10d_future_price_chg_pct'], alpha=0.4)
+    ax[1][0].set_xlabel(col)  # 'bearish/bullish daily average'
+    ax[1][1].set_xlabel(col)
+    ax[0][0].set_ylabel('1 day price change %')
+    ax[0][1].set_ylabel('3 day price change %')
+    ax[1][0].set_ylabel('5 day price change %')
+    ax[1][1].set_ylabel('10 day price change %')
+    f.suptitle('bearish/bullish sentiment vs price changes for ' + ticker)
+    plt.tight_layout(rect=[0, 0.03, 1, 0.95])
+    plt.show()
 
 # resample bearish/bullish to daily, get number of counts of posts
 
@@ -807,8 +845,42 @@ def update_lots_of_tickers():
         for t in tickers:
             print('scraping', t)
             scrape_historical_data(t)
+            # TODO: save latest in a temp file, then once finished getting all new data, append to big file
             scrape_historical_data(t, only_update_latest=True)
 
+
+def do_ml(ticker, must_be_up_to_date=False):
+    df = load_historical_data(ticker)
+    full_3min, full_daily, future_price_chg_cols = combine_with_price_data(ticker, must_be_up_to_date)
+    ml_on_combined_data(ticker, full_daily, future_price_chg_cols)
+
+
+def plot_close_bear_bull_count():
+    f, axs = plt.subplots(4, 1)
+    axs[0].plot(full_daily['entities.sentiment.basic'], label='bearish/bullish', c='k')
+    axs[0].set_ylabel('bearish/bullish daily')
+    ax2 = axs[0].twinx()
+    ax2.plot(full_daily['close'], label='close')
+    ax2.set_ylabel('close')
+    ax2.legend()
+    axs[1].plot(full_daily['count'], c='orange')
+    axs[1].set_ylabel('count')
+    axs[2].plot(full_daily['bull_count'], label='bull_count', c='g')
+    axs[2].plot(full_daily['bear_count'], label='bear_count', c='r')
+    axs[2].legend()
+    axs[3].plot(full_daily['pos_count'], c='g')
+    axs[3].plot(full_daily['neg_count'], c='r')
+    axs[3].legend()
+    plt.show()
+
+
+
+# TODO: plot above with counts, create new feature from counts and bear/bull, resample bear/bull with sum instead of mean (and do for individual bear/bull)
+# examine what happened when it went bearish for a sec then back to bullish
+
+# get predictions for all stocks in watchlist
+# tickers = get_stock_watchlist()
+# full_3min, full_daily, future_price_chg_cols = combine_with_price_data('SNAP')
 
 # # find large gap in data for missing intermediate data
 # tsla = load_historical_data('TSLA')
