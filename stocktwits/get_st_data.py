@@ -1,3 +1,5 @@
+# TODO: keep track of which tickers have reached end of data
+
 import os
 import time
 import pickle as pk
@@ -113,14 +115,13 @@ def scrape_historical_data(ticker='AAPL', verbose=True, only_update_latest=False
         latest = None
         all_messages = []
 
+    new_messages = []
     if only_update_latest:
         # too hard to deal with existing new messages, just start over if partially completed
         earliest = None
-        new_messages = []
         print('going to update only the latest messages')
     else:
         print('going to get the earliest messages to the end')
-        new_messages = None
 
     start = time.time()
     # returns a dictionary with keys ['cursor', 'response', 'messages', 'symbol']
@@ -223,6 +224,8 @@ def get_sentiments_vader_dask(df, analyzer):
 
 
 def load_historical_data(ticker='AAPL', must_be_up_to_date=False):
+    # TODO: try new method from swifter
+
     filepath = get_home_dir() + 'stocktwits/data/' + ticker + '/'
     filename = filepath + ticker + '_all_messages.pk'
     if os.path.exists(filename):
@@ -320,11 +323,13 @@ def combine_with_price_data(ticker='TSLA', must_be_up_to_date=True):
     # meld with price data and see if any correlations
     trades_3min = scrape_ib.load_data(ticker)  # by default loads 3 mins bars
     # check if data up to date, first check if data is same day as NY date
-    if must_be_up_to_date:
-        up_to_date = check_if_data_up_to_date(trades_3min.index[-1].date())
-        if not up_to_date:
-            print('price data not up to date')
-            return None, None, None
+    up_to_date = check_if_data_up_to_date(trades_3min.index[-1].date())
+    if not up_to_date:
+        print('price data not up to date')
+        if must_be_up_to_date:
+                return None, None, None
+    else:
+        print('stock price data up to date')
 
     st = load_historical_data(ticker, must_be_up_to_date=must_be_up_to_date)  # get stock twits data
     if st is None:  # data is not up to date
@@ -436,7 +441,8 @@ def combine_with_price_data(ticker='TSLA', must_be_up_to_date=True):
     # ignore weekends
     trades_1d = trades_1d[trades_1d.index.weekday.isin(set(range(5)))]
 
-
+    # drop holidays
+    trades_1d.dropna(inplace=True)
 
     full_daily = pd.concat([trades_1d, st_daily_full], axis=1)
     future_price_chg_cols = []
@@ -489,6 +495,232 @@ def get_tr_test_feats_targs(full_daily, feats_cols, future_price_chg_cols, futur
     te_targs = targs[tr_idx:]
 
     return tr_feats, te_feats, tr_targs, te_targs
+
+
+# TODO: prototype and functionize getting select TAs and converting previous prices into
+
+# TODO: plot rolling min/max of prices of stocks to look for patterns of new highs (breakouts)
+
+# TODO: add short data
+
+
+import sys
+sys.path.append('../../stock_prediction/code')
+import calculate_ta_signals as cts
+
+# TAs to keep
+# natr, normalized average true range
+
+# OBV
+# on-balance volume -- rising price should be accompanied by rising OBV
+# https://www.investopedia.com/articles/active-trading/041814/four-most-commonlyused-indicators-trend-trading.asp
+# If OBV is rising and price isn't, price is likely to follow the OBV and start rising. If price is rising and OBV is flat-lining or falling, the price may be near a top. If the price is falling and OBV is flat-lining or rising, the price could be nearing a bottom.
+# https://www.investopedia.com/articles/active-trading/021115/uncover-market-sentiment-onbalance-volume-obv.asp
+
+# RSI
+# Say the long-term trend of a stock is up. A buy signal occurs when the RSI moves below 50 and then back above it
+# A short-trade signal occurs when the trend is down and the RSI moves above 50 and then back below it.
+# RSI, relative strength index
+
+# ADX
+# average directional index; above 25 is a strong trend
+# A series of higher ADX peaks means trend momentum is increasing.
+# https://www.investopedia.com/articles/trading/07/adx-trend-indicator.asp
+
+# trend indicators: https://www.incrediblecharts.com/indicators/trend_indicators.php
+# https://www.incrediblecharts.com/indicators/trix_indicator.php
+# TRIX
+# Go long [L] when TRIX crosses to above the signal line while below zero.
+# Price closes above the MA 4 days earlier, but then whipsaws us in and out of several times at [W].
+# Go short [S] when TRIX crosses to below the signal line while above zero.
+# By comparison the MA signal [X] is much later.
+
+# http://www.incrediblecharts.com/indicators/macd-percentage-price-oscillator.php
+# PPO
+# if abs(PPO) > 1%, then trending
+# First check whether price is trending.
+# Go long when MACD crosses its signal line from below.
+# Go short when MACD crosses its signal line from above.
+
+
+# ATR:
+# https://www.investopedia.com/articles/trading/08/atr.asp
+
+
+def load_ib_data(ticker, timeframe='1D'):
+    trades_3min = scrape_ib.load_data(ticker)  # by default loads 3 mins bars
+    if timeframe == '3 mins':
+        return trades_3min
+    elif timeframe == '1D':
+        trades_1d = trades_3min.resample('1D').apply({'open': 'first',
+                                                    'high': 'max',
+                                                    'low': 'min',
+                                                    'close': 'last',
+                                                    'volume': 'sum',
+                                                    'bid_open': 'first',
+                                                    'bid_high': 'max',
+                                                    'bid_low': 'min',
+                                                    'bid_close': 'last',
+                                                    'ask_open': 'first',
+                                                    'ask_high': 'max',
+                                                    'ask_low': 'min',
+                                                    'ask_close': 'last',
+                                                    'opt_vol_open': 'first',
+                                                    'opt_vol_high': 'max',
+                                                    'opt_vol_low': 'min',
+                                                    'opt_vol_close': 'last'})
+        # ignore weekends
+        trades_1d = trades_1d[trades_1d.index.weekday.isin(set(range(5)))]
+        # drop holidays
+        trades_1d.dropna(inplace=True)
+        return trades_1d
+
+
+def get_TAs(trades_1d):
+    import talib
+    trades_1d_ta = cts.create_tas(trades_1d.copy(), ohlcv_cols=['open', 'high', 'low', 'close', 'volume'], return_df=True, tp=False)
+
+    keep_tas = ['atr_5',
+                'atr_14',
+                'natr_5',
+                'natr_14',
+                'obv_cl',
+                'obv_cl_ema_14',
+                'rsi_cl_5',
+                'rsi_cl_14',
+                'adx_14',
+                'adx_5',
+                'ppo_cl',
+                'ppo_cl_signal',
+                'trix_cl_12',
+                'trix_cl_12_signal',
+                'mdi',
+                'pldi']
+
+    trades_1d_tas = trades_1d_ta.loc[:, keep_tas]
+
+    trades_1d_tas['obv_cl_ema_14_diff'] = trades_1d_tas.loc[:, 'obv_cl_ema_14'].diff()
+    # second derivative, if positive, it is increasing
+    trades_1d_tas['obv_cl_ema_14_diff2'] = trades_1d_tas.loc[:, 'obv_cl_ema_14_diff'].diff()
+    trades_1d_tas.bfill(inplace=True)
+    trades_1d_tas['obv_cl_ema_14_diff_ema9'] = talib.EMA(trades_1d_tas['obv_cl_ema_14_diff'].values, timeperiod=9)
+    trades_1d_tas['obv_cl_ema_14_diff2_ema9'] = talib.EMA(trades_1d_tas['obv_cl_ema_14_diff2'].values, timeperiod=9)
+
+    # adx trends
+    trades_1d_tas['adx_14_diff'] = trades_1d_tas.loc[:, 'adx_14'].diff()
+    trades_1d_tas['adx_5_diff'] = trades_1d_tas.loc[:, 'adx_5'].diff()
+    trades_1d_tas.bfill(inplace=True)
+    trades_1d_tas['adx_14_diff_ema'] = talib.EMA(trades_1d_tas['adx_14_diff'].values, timeperiod=9)
+    trades_1d_tas['adx_5_diff_ema'] = talib.EMA(trades_1d_tas['adx_5_diff'].values, timeperiod=3)
+
+    # gets indices of zero crossings with particular signs
+    def crossings_nonzero_pos2neg(data):
+        pos = data > 0
+        return (pos[:-1] & ~pos[1:]).nonzero()[0]
+
+
+    def crossings_nonzero_neg2pos(data):
+        neg = data < 0
+        return (neg[:-1] & ~neg[1:]).nonzero()[0]
+
+
+    # PPO
+    trades_1d_tas['ppo_diff'] = trades_1d_tas.loc[:, 'ppo_cl'] - trades_1d_tas.loc[:, 'ppo_cl_signal']
+    trades_1d_tas.bfill(inplace=True)
+    # from negative to positive is a buy signal, especially if the PPO values are negative
+    neg2pos_crossings = crossings_nonzero_neg2pos(trades_1d_tas['ppo_diff'].values)
+    trades_1d_tas['ppo_buy_signal'] = 0
+    indices = trades_1d_tas.index[neg2pos_crossings]
+    trades_1d_tas.loc[indices, 'ppo_buy_signal'] = 1
+    # from positive to negative is sell signal, especially if PPO values positive
+    pos2neg_crossings = crossings_nonzero_pos2neg(trades_1d_tas['ppo_diff'].values)
+    trades_1d_tas['ppo_sell_signal'] = 0
+    indices = trades_1d_tas.index[pos2neg_crossings]
+    trades_1d_tas.loc[indices, 'ppo_sell_signal'] = 1
+
+    # TRIX
+    trades_1d_tas['trix_diff'] = trades_1d_tas.loc[:, 'trix_cl_12'] - trades_1d_tas.loc[:, 'trix_cl_12_signal']
+    trades_1d_tas.bfill(inplace=True)
+    # from negative to positive is a buy signal, especially if the PPO values are negative
+    neg2pos_crossings = crossings_nonzero_neg2pos(trades_1d_tas['trix_diff'].values)
+    trades_1d_tas['trix_buy_signal'] = 0
+    indices = trades_1d_tas.index[neg2pos_crossings]
+    trades_1d_tas.loc[indices, 'trix_buy_signal'] = 1
+    # from positive to negative is sell signal, especially if PPO values positive
+    pos2neg_crossings = crossings_nonzero_pos2neg(trades_1d_tas['trix_diff'].values)
+    trades_1d_tas['trix_sell_signal'] = 0
+    indices = trades_1d_tas.index[pos2neg_crossings]
+    trades_1d_tas.loc[indices, 'trix_sell_signal'] = 1
+
+    return trades_1d_tas
+
+
+# load data into daily format
+ticker = 'CRON'
+trades_1d = load_ib_data(ticker)
+trades_1d_tas = get_TAs(trades_1d)
+
+# TODO: plot with TAs
+
+
+# first determine if market is bullish/bearish
+# OBV rising/falling for QQQ, SPY, and DIA, IJR, IJH
+qqq_3min = scrape_ib.load_data('QQQ')
+spy_3min = scrape_ib.load_data('SPY')
+dia_3min = scrape_ib.load_data('DIA')
+
+# TODO: get trend of sector and even more specific sector, e.g. related stocks (like marijuana stocks for CRON)
+
+market_is = 'bullish'
+
+# market_is = 'bearish'
+
+
+latest_point = trades_1d_tas.iloc[-1].to_frame().T
+# calculate TA signals of trend
+# obv rising or falling
+if market_is == 'bullish':
+    if latest_point['obv_cl_ema_14_diff_ema9'][0] > trades_1d_tas['obv_cl_ema_14_diff_ema9'].std() * 0.5:
+        print('OBV is showing sign of bullish trend')
+
+
+# for RSI, find when price crossed threshold of 50
+if market_is == 'bullish':
+    if latest_point['rsi_cl_5'][0] > 50:
+        print('short-term RSI bullish signal')
+    if latest_point['rsi_cl_14'][0] > 50:
+        print('mid-term RSI bullish signal')
+    # TODO: find crossover of under 50 to above 50 and vice versa
+
+
+# for adx_14, should be increasing
+# adx_5 should be above 25
+if market_is == 'bullish':
+    # first check that trend is positive direction with plus and minus DI indicators
+    if latest_point['pldi'][0] > latest_point['mdi'][0]:
+        if latest_point['adx_14_diff_ema'][0] > 0:
+            print('mid-term adx EMA bullish signal')
+        if latest_point['adx_14'][0] > 25:
+            print('mid-term adx strong trend signal')
+        if latest_point['adx_5'][0] > 25:
+            print('adx short-term strong bullish signal')
+
+
+if market_is == 'bullish':
+    if latest_point['ppo_buy_signal'][0] == 1:
+        print('PPO buy signal!')
+    if latest_point['trix_buy_signal'][0] == 1:
+        print('TRIX buy signal')
+    if latest_point['ppo_diff'][0] > 0:
+        print('ppo trend is bullish')
+    if latest_point['trix_diff'][0] > 0:
+        print('trix trend is bullish')
+
+
+# if ppo_cl is above signal line (ppo_cl_signal), then bullish sign, especially if both below 0
+# ppo_cl crossing signal line below zero is a buy signal, or bullish signal
+# TODO: play around with slopes; feed historical data into neural network
+
 
 
 def ml_on_combined_data(ticker, full_daily, future_price_chg_cols, show_tr_test=True, show_feat_imps=True):
@@ -619,6 +851,8 @@ def ml_on_combined_data(ticker, full_daily, future_price_chg_cols, show_tr_test=
         plt.show()
 
     # fit on full data and make prediction for current day
+    # save here because often has problem with NAs
+    pk.dump(cur_best_hyperparams, open(best_hyperparams_filename, 'wb'), -1)
     feats = np.vstack((tr_feats, te_feats))
     targs = np.vstack((tr_targs, te_targs))
     rfr.fit(feats, targs)
@@ -627,8 +861,8 @@ def ml_on_combined_data(ticker, full_daily, future_price_chg_cols, show_tr_test=
     newest_prediction = rfr.predict(last_feature)
     print('latest prediction:', str(newest_prediction[-1]))
     cur_best_hyperparams[ticker]['latest_predictions'] = newest_prediction[-1]
-
     pk.dump(cur_best_hyperparams, open(best_hyperparams_filename, 'wb'), -1)
+
 
     # TODO: add in short interest as feature
 
@@ -774,6 +1008,7 @@ def plot_combined_data(full_df):
     #                                         'low': 'min',
     #                                         'close': 'last'})
 
+
 def plot_col_vs_pct_chg(full_daily, ticker, col='entities.sentiment.basic'):
     f, ax = plt.subplots(2, 2)
     ax[0][0].scatter(full_daily[col], full_daily['1d_future_price_chg_pct'], alpha=0.4)
@@ -839,6 +1074,19 @@ def get_stock_watchlist(update=True):
         return cur_tickers
 
 
+def add_stocks_to_watchlist(stocks):
+    """
+    supply a list of stocks which gets added to the pickle file
+    """
+    filename = 'tickers_watching.pk'
+    cur_tickers = []
+    if os.path.exists(filename):
+        cur_tickers = pk.load(open(filename, 'rb'))
+
+    tickers = sorted(list(set(cur_tickers + stocks)))
+    pk.dump(tickers, open(filename, 'wb'), -1)
+
+
 def update_lots_of_tickers():
     tickers = get_stock_watchlist()
     while True:
@@ -855,8 +1103,8 @@ def do_ml(ticker, must_be_up_to_date=False):
     ml_on_combined_data(ticker, full_daily, future_price_chg_cols)
 
 
-def plot_close_bear_bull_count():
-    f, axs = plt.subplots(4, 1)
+def plot_close_bear_bull_count(full_daily):
+    f, axs = plt.subplots(4, 1, sharex=True)
     axs[0].plot(full_daily['entities.sentiment.basic'], label='bearish/bullish', c='k')
     axs[0].set_ylabel('bearish/bullish daily')
     ax2 = axs[0].twinx()
