@@ -505,10 +505,6 @@ def get_tr_test_feats_targs(full_daily, feats_cols, future_price_chg_cols, futur
 # TODO: add short data
 
 
-import sys
-sys.path.append('../../stock_prediction/code')
-import calculate_ta_signals as cts
-
 # TAs to keep
 # natr, normalized average true range
 
@@ -579,6 +575,10 @@ def load_ib_data(ticker, timeframe='1D'):
 
 def get_TAs(trades_1d):
     import talib
+    import sys
+    sys.path.append('../../stock_prediction/code')
+    sys.path.append('../stock_prediction/code')
+    import calculate_ta_signals as cts
     trades_1d_ta = cts.create_tas(trades_1d.copy(), ohlcv_cols=['open', 'high', 'low', 'close', 'volume'], return_df=True, tp=False)
 
     keep_tas = ['atr_5',
@@ -670,28 +670,110 @@ def get_TAs(trades_1d):
     return trades_1d_tas
 
 
-# load data into daily format
-ticker = 'CRON'
-trades_1d = load_ib_data(ticker)
-trades_1d_tas = get_TAs(trades_1d)
+def load_cron():
+    # load data into daily format
+    ticker = 'CRON'
+    trades_1d = load_ib_data(ticker)
+    trades_1d_tas = get_TAs(trades_1d)
 
-# TODO: plot with TAs
+    # TODO: plot with TAs
 
 
-# first determine if market is bullish/bearish
-# OBV rising/falling for QQQ, SPY, and DIA, IJR, IJH
-ticker = 'QQQ'
-qqq_1day = load_ib_data(ticker)
-qqq_1day_tas = get_TAs(qqq_1day)
-bearish_signals_qqq, bullish_signals_qqq, bullish_buy_signals_qqq, bearish_sell_signals_qqq = get_bullish_bearish_signals(qqq_1day_tas)
-ticker = 'SPY'
-spy_1day = load_ib_data(ticker)
-spy_1day_tas = get_TAs(spy_1day)
-bearish_signals_spy, bullish_signals_spy, bullish_buy_signals_spy, bearish_sell_signals_spy = get_bullish_bearish_signals(qqq_1day)
-ticker = 'DIA'
-dia_1day = load_ib_data(ticker)
-dia_1day_tas = get_TAs(dia_1day)
-bearish_signals_dia, bullish_signals_dia, bullish_buy_signals_dia, bearish_sell_signals_dia = get_bullish_bearish_signals(qqq_1day)
+def get_market_status():
+    """
+    gets if the market is bearish, bullish, or neutral
+    for QQQ, DIA, SPY, IJR, IJH
+    nasdaq, dow, and sp indexes
+
+    also checks for buy/sell signals
+    """
+    # TODO: use list of tickers and make it an argument so can scan sectors as well
+    ticker = 'QQQ'
+    qqq_1day = load_ib_data(ticker)
+    qqq_1day_tas = get_TAs(qqq_1day)
+    bearish_signals_qqq, bullish_signals_qqq, bearish_sell_signals_qqq, bullish_buy_signals_qqq = get_bullish_bearish_signals(qqq_1day_tas, verbose=False)
+    ticker = 'SPY'
+    spy_1day = load_ib_data(ticker)
+    spy_1day_tas = get_TAs(spy_1day)
+    bearish_signals_spy, bullish_signals_spy, bearish_sell_signals_spy, bullish_buy_signals_spy = get_bullish_bearish_signals(spy_1day_tas, verbose=False)
+    ticker = 'DIA'
+    dia_1day = load_ib_data(ticker)
+    dia_1day_tas = get_TAs(dia_1day)
+    bearish_signals_dia, bullish_signals_dia, bearish_sell_signals_dia, bullish_buy_signals_dia = get_bullish_bearish_signals(dia_1day_tas, verbose=False)
+
+    # get overall market trend
+    bearish_totals =  -np.mean(list(bearish_signals_qqq.values()) + list(bearish_signals_spy.values()) + list(bearish_signals_dia.values()))
+    bullish_totals =  np.mean(list(bullish_signals_qqq.values()) + list(bullish_signals_spy.values()) + list(bullish_signals_dia.values()))
+
+    overall = np.mean([bearish_totals, bullish_totals])
+    print('average of all bearish/bullish signals:', overall)
+    if overall > 0.05:
+        print('bullish market!')
+        market_is = 'bullish'
+    elif overall < -0.05:
+        print('bearish market!')
+        market_is = 'bearish'
+    else:
+        print('somewhat neutral market')
+        market_is = None
+
+    return market_is
+
+
+def scan_watchlist():
+    bear_bull_scores = {}
+    ta_dfs = {}
+    bear_sigs = {}
+    bull_sigs = {}
+    bull_buy_sigs = {}
+    bear_sell_sigs = {}
+    overall_bear_bull = {}
+
+    market_is = get_market_status()
+    watchlist = get_stock_watchlist(update=False)
+    for ticker in watchlist:
+        print(ticker)
+        if ticker in ta_dfs.keys():
+            continue
+        try:
+            trades_1day = load_ib_data(ticker)
+        except FileNotFoundError:
+            print('no trade data for', ticker)
+            continue
+
+        if trades_1day.shape[0] < 50:  # need enough data for moving averages
+            continue
+
+        trades_1day_tas = get_TAs(trades_1day)
+        ta_dfs[ticker] = trades_1day_tas
+        bearish_signals, bullish_signals, bearish_sell_signals, bullish_buy_signals = get_bullish_bearish_signals(trades_1day_tas, verbose=False)
+        bear_sigs[ticker] = bearish_signals
+        bull_sigs[ticker] = bullish_signals
+        bear_sell_sigs[ticker] = bearish_sell_signals
+        bull_buy_sigs[ticker] = bullish_buy_signals
+
+        # screen for buy/sell signals
+        sell_sigs = np.sum(list(bearish_sell_signals.values()))
+        buy_sigs = np.sum(list(bullish_buy_signals.values()))
+        if sell_sigs > 0:
+            print(sell_sigs, 'sell signals for', ticker)
+        if buy_sigs > 0:
+            print(buy_sigs, 'buy signals for', ticker)
+
+        bearish_totals =  -np.mean(list(bear_sigs[ticker].values()))
+        bullish_totals =  np.mean(list(bull_sigs[ticker].values()))
+
+        overall = np.mean([bearish_totals, bullish_totals])
+        overall_bear_bull[ticker] = overall
+
+
+    # get bulls with over 0.25 scores overall (at least half of bullish signals triggering)
+
+    # TODO: find most recent buy signals
+    for b, v in overall_bear_bull.items():
+        if v >= 0.25:
+            print(b, v)
+
 
 
 # TODO: get trend of sector and even more specific sector, e.g. related stocks (like marijuana stocks for CRON)
@@ -701,7 +783,7 @@ def check_buy_sell_signals():
     pass
 
 
-def get_bullish_bearish_signals(trades_1d, market_is=None):
+def get_bullish_bearish_signals(trades_1d_tas, market_is=None, verbose=True):
     # initialize all as 0s
     bullish_signals = OrderedDict({
                         'OBV': 0,
@@ -747,62 +829,78 @@ def get_bullish_bearish_signals(trades_1d, market_is=None):
 
         # obv rising or falling
         if latest_point['obv_cl_ema_14_diff_ema9'][0] > trades_1d_tas['obv_cl_ema_14_diff_ema9'].std() * 0.5:
-            print('OBV is showing sign of bullish trend')
+            if verbose:
+                print('OBV is showing sign of bullish trend')
             bullish_signals['OBV'] = 1
         elif latest_point['obv_cl_ema_14_diff_ema9'][0] < trades_1d_tas['obv_cl_ema_14_diff_ema9'].std() * 0.5:
-            print('OBV is showing sign of bearish trend')
+            if verbose:
+                print('OBV is showing sign of bearish trend')
             bearish_signals['OBV'] = 1
 
         # RSI
         if latest_point['rsi_cl_5'][0] > 50:
-            print('short-term RSI bullish signal')
+            if verbose:
+                print('short-term RSI bullish signal')
             bullish_signals['short-term RSI'] = 1
         else:
-            print('short-term RSI bearish signal')
+            if verbose:
+                print('short-term RSI bearish signal')
             bearish_signals['short-term RSI'] = 1
         if latest_point['rsi_cl_14'][0] > 50:
-            print('mid-term RSI bullish signal')
+            if verbose:
+                print('mid-term RSI bullish signal')
             bullish_signals['mid-term RSI'] = 1
         else:
-            print('mid-term RSI bearish signal')
+            if verbose:
+                print('mid-term RSI bearish signal')
             bearish_signals['mid-term RSI'] = 1
 
         # buy signals
         if latest_point['rsi_5_buy_signal'][0] == 1:
-            print('RSI short-term buy signal!')
+            if verbose:
+                print('RSI short-term buy signal!')
             bullish_buy_signals['short-term RSI buy'] = 1
         if latest_point['rsi_14_buy_signal'][0] == 1:
-            print('RSI mid-term buy signal!')
+            if verbose:
+                print('RSI mid-term buy signal!')
             bullish_buy_signals['mid-term RSI buy'] = 1
 
         # sell signals
         if latest_point['rsi_5_sell_signal'][0] == 1:
-            print('RSI short-term sell signal!')
+            if verbose:
+                print('RSI short-term sell signal!')
             bearish_buy_signals['short-term RSI sell'] = 1
         if latest_point['rsi_14_sell_signal'][0] == 1:
-            print('RSI mid-term sell signal!')
+            if verbose:
+                print('RSI mid-term sell signal!')
             bearish_buy_signals['mid-term RSI sell'] = 1
 
         # ADX
         if latest_point['pldi'][0] > latest_point['mdi'][0]:
             if latest_point['adx_14_diff_ema'][0] > 0:
-                print('mid-term adx EMA bullish signal')
+                if verbose:
+                    print('mid-term adx EMA bullish signal')
                 bullish_signals['mid-term ADX'] = 1
             if latest_point['adx_14'][0] > 25:
-                print('mid-term adx strong trend signal')
+                if verbose:
+                    print('mid-term adx strong trend signal')
                 bullish_signals['mid-term ADX strong trend'] = 1
             if latest_point['adx_5'][0] > 25:
-                print('adx short-term strong bullish signal')
+                if verbose:
+                    print('adx short-term strong bullish signal')
                 bullish_signals['short-term ADX strong trend'] = 1
         else:
             if latest_point['adx_14_diff_ema'][0] > 0:
-                print('mid-term adx EMA bearish signal')
+                if verbose:
+                    print('mid-term adx EMA bearish signal')
                 bearish_signals['mid-term ADX'] = 1
             if latest_point['adx_14'][0] > 25:
-                print('mid-term adx strong trend signal')
+                if verbose:
+                    print('mid-term adx strong trend signal')
                 bearish_signals['mid-term ADX strong trend'] = 1
             if latest_point['adx_5'][0] > 25:
-                print('adx short-term strong bullish signal')
+                if verbose:
+                    print('adx short-term strong bullish signal')
                 bearish_signals['short-term ADX strong trend'] = 1
 
 
@@ -810,53 +908,66 @@ def get_bullish_bearish_signals(trades_1d, market_is=None):
         # if ppo_cl is above signal line (ppo_cl_signal), then bullish sign, especially if both below 0
         # ppo_cl crossing signal line below zero is a buy signal, or bullish signal
         if latest_point['ppo_buy_signal'][0] == 1:
-            print('PPO buy signal!')
+            if verbose:
+                print('PPO buy signal!')
             bullish_buy_signals['PPO buy signal'] = 1
         if latest_point['trix_buy_signal'][0] == 1:
-            print('TRIX buy signal!')
+            if verbose:
+                print('TRIX buy signal!')
             bullish_buy_signals['TRIX buy signal'] = 1
         if latest_point['ppo_diff'][0] > 0:
-            print('ppo trend is bullish')
+            if verbose:
+                print('ppo trend is bullish')
             bullish_signals['PPO trend'] = 1
         if latest_point['trix_diff'][0] > 0:
-            print('trix trend is bullish')
+            if verbose:
+                print('trix trend is bullish')
             bullish_signals['TRIX trend'] = 1
 
         if latest_point['ppo_sell_signal'][0] == 1:
-            print('PPO sell signal!')
+            if verbose:
+                print('PPO sell signal!')
             bearish_buy_signals['PPO sell signal'] = 1
         if latest_point['trix_sell_signal'][0] == 1:
-            print('TRIX sell signal!')
+            if verbose:
+                print('TRIX sell signal!')
             bullish_buy_signals['TRIX sell signal'] = 1
         if latest_point['ppo_diff'][0] < 0:
-            print('ppo trend is bearish')
+            if verbose:
+                print('ppo trend is bearish')
             bearish_signals['PPO trend'] = 1
         if latest_point['trix_diff'][0] < 0:
-            print('trix trend is bearish')
+            if verbose:
+                print('trix trend is bearish')
             bearish_signals['TRIX trend'] = 1
 
-        return bearish_signals, bullish_signals, bullish_buy_signals, bearish_sell_signals
+        return bearish_signals, bullish_signals, bearish_sell_signals, bullish_buy_signals
 
     elif market_is == 'bullish':
         # obv rising
         if latest_point['obv_cl_ema_14_diff_ema9'][0] > trades_1d_tas['obv_cl_ema_14_diff_ema9'].std() * 0.5:
-            print('OBV is showing sign of bullish trend')
+            if verbose:
+                print('OBV is showing sign of bullish trend')
             bullish_signals['OBV'] = 1
 
         # RSI
         if latest_point['rsi_cl_5'][0] > 50:
-            print('short-term RSI bullish signal')
+            if verbose:
+                print('short-term RSI bullish signal')
             bullish_signals['short-term RSI'] = 1
         if latest_point['rsi_cl_14'][0] > 50:
-            print('mid-term RSI bullish signal')
+            if verbose:
+                print('mid-term RSI bullish signal')
             bullish_signals['mid-term RSI'] = 1
 
         # buy signals
         if latest_point['rsi_5_buy_signal'][0] == 1:
-            print('RSI short-term buy signal!')
+            if verbose:
+                print('RSI short-term buy signal!')
             bullish_buy_signals['short-term RSI buy'] = 1
         if latest_point['rsi_14_buy_signal'][0] == 1:
-            print('RSI mid-term buy signal!')
+            if verbose:
+                print('RSI mid-term buy signal!')
             bullish_buy_signals['mid-term RSI buy'] = 1
 
         # ADX
@@ -865,29 +976,36 @@ def get_bullish_bearish_signals(trades_1d, market_is=None):
         # first check that trend is positive direction with plus and minus DI indicators
         if latest_point['pldi'][0] > latest_point['mdi'][0]:
             if latest_point['adx_14_diff_ema'][0] > 0:
-                print('mid-term adx EMA bullish signal')
+                if verbose:
+                    print('mid-term adx EMA bullish signal')
                 bullish_signals['mid-term ADX'] = 1
             if latest_point['adx_14'][0] > 25:
-                print('mid-term adx strong trend signal')
+                if verbose:
+                    print('mid-term adx strong trend signal')
                 bullish_signals['mid-term ADX strong trend'] = 1
             if latest_point['adx_5'][0] > 25:
-                print('adx short-term strong bullish signal')
+                if verbose:
+                    print('adx short-term strong bullish signal')
                 bullish_signals['short-term ADX strong trend'] = 1
 
         # PPO/TRIX
         # if ppo_cl is above signal line (ppo_cl_signal), then bullish sign, especially if both below 0
         # ppo_cl crossing signal line below zero is a buy signal, or bullish signal
         if latest_point['ppo_buy_signal'][0] == 1:
-            print('PPO buy signal!')
+            if verbose:
+                print('PPO buy signal!')
             bullish_buy_signals['PPO buy signal'] = 1
         if latest_point['trix_buy_signal'][0] == 1:
-            print('TRIX buy signal!')
+            if verbose:
+                print('TRIX buy signal!')
             bullish_buy_signals['TRIX buy signal'] = 1
         if latest_point['ppo_diff'][0] > 0:
-            print('ppo trend is bullish')
+            if verbose:
+                print('ppo trend is bullish')
             bullish_signals['PPO trend'] = 1
         if latest_point['trix_diff'][0] > 0:
-            print('trix trend is bullish')
+            if verbose:
+                print('trix trend is bullish')
             bullish_signals['TRIX trend'] = 1
 
         return bullish_signals, bullish_buy_signals
@@ -1272,10 +1390,14 @@ def update_lots_of_tickers():
     tickers = get_stock_watchlist()
     while True:
         for t in tickers:
-            print('scraping', t)
-            scrape_historical_data(t)
-            # TODO: save latest in a temp file, then once finished getting all new data, append to big file
-            scrape_historical_data(t, only_update_latest=True)
+            try:
+                print('scraping', t)
+                scrape_historical_data(t)
+                # TODO: save latest in a temp file, then once finished getting all new data, append to big file
+                scrape_historical_data(t, only_update_latest=True)
+            except KeyError:
+                print('probably no data')
+                continue
 
 
 def do_ml(ticker, must_be_up_to_date=False):
