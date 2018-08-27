@@ -3,6 +3,7 @@
 import os
 import time
 import pickle as pk
+from collections import OrderedDict
 
 import datetime
 import pytz
@@ -626,7 +627,6 @@ def get_TAs(trades_1d):
 
     # PPO
     trades_1d_tas['ppo_diff'] = trades_1d_tas.loc[:, 'ppo_cl'] - trades_1d_tas.loc[:, 'ppo_cl_signal']
-    trades_1d_tas.bfill(inplace=True)
     # from negative to positive is a buy signal, especially if the PPO values are negative
     neg2pos_crossings = crossings_nonzero_neg2pos(trades_1d_tas['ppo_diff'].values)
     trades_1d_tas['ppo_buy_signal'] = 0
@@ -640,7 +640,6 @@ def get_TAs(trades_1d):
 
     # TRIX
     trades_1d_tas['trix_diff'] = trades_1d_tas.loc[:, 'trix_cl_12'] - trades_1d_tas.loc[:, 'trix_cl_12_signal']
-    trades_1d_tas.bfill(inplace=True)
     # from negative to positive is a buy signal, especially if the PPO values are negative
     neg2pos_crossings = crossings_nonzero_neg2pos(trades_1d_tas['trix_diff'].values)
     trades_1d_tas['trix_buy_signal'] = 0
@@ -651,6 +650,22 @@ def get_TAs(trades_1d):
     trades_1d_tas['trix_sell_signal'] = 0
     indices = trades_1d_tas.index[pos2neg_crossings]
     trades_1d_tas.loc[indices, 'trix_sell_signal'] = 1
+
+
+    # RSI crossings
+    trades_1d_tas['rsi_5_diff'] = trades_1d_tas.loc[:, 'rsi_cl_5'] - 50
+    trades_1d_tas['rsi_14_diff'] = trades_1d_tas.loc[:, 'rsi_cl_14'] - 50
+    # from negative to positive is a buy signal, especially if the PPO values are negative
+    for rsi in ['rsi_5', 'rsi_14']:
+        neg2pos_crossings = crossings_nonzero_neg2pos(trades_1d_tas[rsi + '_diff'].values)
+        trades_1d_tas[rsi + '_buy_signal'] = 0
+        indices = trades_1d_tas.index[neg2pos_crossings]
+        trades_1d_tas.loc[indices, rsi + '_buy_signal'] = 1
+        # from positive to negative is sell signal, especially if PPO values positive
+        pos2neg_crossings = crossings_nonzero_pos2neg(trades_1d_tas[rsi + '_diff'].values)
+        trades_1d_tas[rsi + '_sell_signal'] = 0
+        indices = trades_1d_tas.index[pos2neg_crossings]
+        trades_1d_tas.loc[indices, rsi + '_sell_signal'] = 1
 
     return trades_1d_tas
 
@@ -665,61 +680,227 @@ trades_1d_tas = get_TAs(trades_1d)
 
 # first determine if market is bullish/bearish
 # OBV rising/falling for QQQ, SPY, and DIA, IJR, IJH
-qqq_3min = scrape_ib.load_data('QQQ')
-spy_3min = scrape_ib.load_data('SPY')
-dia_3min = scrape_ib.load_data('DIA')
+ticker = 'QQQ'
+qqq_1day = load_ib_data(ticker)
+qqq_1day_tas = get_TAs(qqq_1day)
+bearish_signals_qqq, bullish_signals_qqq, bullish_buy_signals_qqq, bearish_sell_signals_qqq = get_bullish_bearish_signals(qqq_1day_tas)
+ticker = 'SPY'
+spy_1day = load_ib_data(ticker)
+spy_1day_tas = get_TAs(spy_1day)
+bearish_signals_spy, bullish_signals_spy, bullish_buy_signals_spy, bearish_sell_signals_spy = get_bullish_bearish_signals(qqq_1day)
+ticker = 'DIA'
+dia_1day = load_ib_data(ticker)
+dia_1day_tas = get_TAs(dia_1day)
+bearish_signals_dia, bullish_signals_dia, bullish_buy_signals_dia, bearish_sell_signals_dia = get_bullish_bearish_signals(qqq_1day)
+
 
 # TODO: get trend of sector and even more specific sector, e.g. related stocks (like marijuana stocks for CRON)
 
-market_is = 'bullish'
 
-# market_is = 'bearish'
-
-
-latest_point = trades_1d_tas.iloc[-1].to_frame().T
-# calculate TA signals of trend
-# obv rising or falling
-if market_is == 'bullish':
-    if latest_point['obv_cl_ema_14_diff_ema9'][0] > trades_1d_tas['obv_cl_ema_14_diff_ema9'].std() * 0.5:
-        print('OBV is showing sign of bullish trend')
+def check_buy_sell_signals():
+    pass
 
 
-# for RSI, find when price crossed threshold of 50
-if market_is == 'bullish':
-    if latest_point['rsi_cl_5'][0] > 50:
-        print('short-term RSI bullish signal')
-    if latest_point['rsi_cl_14'][0] > 50:
-        print('mid-term RSI bullish signal')
-    # TODO: find crossover of under 50 to above 50 and vice versa
+def get_bullish_bearish_signals(trades_1d, market_is=None):
+    # initialize all as 0s
+    bullish_signals = OrderedDict({
+                        'OBV': 0,
+                        'short-term RSI': 0,
+                        'mid-term RSI': 0,
+                        'mid-term ADX': 0,
+                        'mid-term ADX strong trend': 0,
+                        'short-term ADX strong trend': 0,
+                        'PPO trend': 0,
+                        'TRIX trend': 0
+                        })
+
+    bullish_buy_signals = OrderedDict({
+                                        'PPO buy signal': 0,
+                                        'TRIX buy signal': 0,
+                                        'short-term RSI buy': 0,
+                                        'mid-term RSI buy': 0
+                                        })
+
+    bearish_signals = OrderedDict({
+                        'OBV': 0,
+                        'short-term RSI': 0,
+                        'mid-term RSI': 0,
+                        'mid-term ADX': 0,
+                        'mid-term ADX strong trend': 0,
+                        'short-term ADX strong trend': 0,
+                        'PPO trend': 0,
+                        'TRIX trend': 0
+                        })
+
+    bearish_sell_signals = OrderedDict({
+                                        'PPO sell signal': 0,
+                                        'TRIX sell signal': 0,
+                                        'short-term RSI sell': 0,
+                                        'mid-term RSI sell': 0
+                                        })
+
+    latest_point = trades_1d_tas.iloc[-1].to_frame().T
+
+    if market_is is None:
+        # test for both bearish and bullish signals
+        # this is mainly intended for getting trends of the market/sector/related stocks, etc
+
+        # obv rising or falling
+        if latest_point['obv_cl_ema_14_diff_ema9'][0] > trades_1d_tas['obv_cl_ema_14_diff_ema9'].std() * 0.5:
+            print('OBV is showing sign of bullish trend')
+            bullish_signals['OBV'] = 1
+        elif latest_point['obv_cl_ema_14_diff_ema9'][0] < trades_1d_tas['obv_cl_ema_14_diff_ema9'].std() * 0.5:
+            print('OBV is showing sign of bearish trend')
+            bearish_signals['OBV'] = 1
+
+        # RSI
+        if latest_point['rsi_cl_5'][0] > 50:
+            print('short-term RSI bullish signal')
+            bullish_signals['short-term RSI'] = 1
+        else:
+            print('short-term RSI bearish signal')
+            bearish_signals['short-term RSI'] = 1
+        if latest_point['rsi_cl_14'][0] > 50:
+            print('mid-term RSI bullish signal')
+            bullish_signals['mid-term RSI'] = 1
+        else:
+            print('mid-term RSI bearish signal')
+            bearish_signals['mid-term RSI'] = 1
+
+        # buy signals
+        if latest_point['rsi_5_buy_signal'][0] == 1:
+            print('RSI short-term buy signal!')
+            bullish_buy_signals['short-term RSI buy'] = 1
+        if latest_point['rsi_14_buy_signal'][0] == 1:
+            print('RSI mid-term buy signal!')
+            bullish_buy_signals['mid-term RSI buy'] = 1
+
+        # sell signals
+        if latest_point['rsi_5_sell_signal'][0] == 1:
+            print('RSI short-term sell signal!')
+            bearish_buy_signals['short-term RSI sell'] = 1
+        if latest_point['rsi_14_sell_signal'][0] == 1:
+            print('RSI mid-term sell signal!')
+            bearish_buy_signals['mid-term RSI sell'] = 1
+
+        # ADX
+        if latest_point['pldi'][0] > latest_point['mdi'][0]:
+            if latest_point['adx_14_diff_ema'][0] > 0:
+                print('mid-term adx EMA bullish signal')
+                bullish_signals['mid-term ADX'] = 1
+            if latest_point['adx_14'][0] > 25:
+                print('mid-term adx strong trend signal')
+                bullish_signals['mid-term ADX strong trend'] = 1
+            if latest_point['adx_5'][0] > 25:
+                print('adx short-term strong bullish signal')
+                bullish_signals['short-term ADX strong trend'] = 1
+        else:
+            if latest_point['adx_14_diff_ema'][0] > 0:
+                print('mid-term adx EMA bearish signal')
+                bearish_signals['mid-term ADX'] = 1
+            if latest_point['adx_14'][0] > 25:
+                print('mid-term adx strong trend signal')
+                bearish_signals['mid-term ADX strong trend'] = 1
+            if latest_point['adx_5'][0] > 25:
+                print('adx short-term strong bullish signal')
+                bearish_signals['short-term ADX strong trend'] = 1
 
 
-# for adx_14, should be increasing
-# adx_5 should be above 25
-if market_is == 'bullish':
-    # first check that trend is positive direction with plus and minus DI indicators
-    if latest_point['pldi'][0] > latest_point['mdi'][0]:
-        if latest_point['adx_14_diff_ema'][0] > 0:
-            print('mid-term adx EMA bullish signal')
-        if latest_point['adx_14'][0] > 25:
-            print('mid-term adx strong trend signal')
-        if latest_point['adx_5'][0] > 25:
-            print('adx short-term strong bullish signal')
+        # PPO/TRIX
+        # if ppo_cl is above signal line (ppo_cl_signal), then bullish sign, especially if both below 0
+        # ppo_cl crossing signal line below zero is a buy signal, or bullish signal
+        if latest_point['ppo_buy_signal'][0] == 1:
+            print('PPO buy signal!')
+            bullish_buy_signals['PPO buy signal'] = 1
+        if latest_point['trix_buy_signal'][0] == 1:
+            print('TRIX buy signal!')
+            bullish_buy_signals['TRIX buy signal'] = 1
+        if latest_point['ppo_diff'][0] > 0:
+            print('ppo trend is bullish')
+            bullish_signals['PPO trend'] = 1
+        if latest_point['trix_diff'][0] > 0:
+            print('trix trend is bullish')
+            bullish_signals['TRIX trend'] = 1
+
+        if latest_point['ppo_sell_signal'][0] == 1:
+            print('PPO sell signal!')
+            bearish_buy_signals['PPO sell signal'] = 1
+        if latest_point['trix_sell_signal'][0] == 1:
+            print('TRIX sell signal!')
+            bullish_buy_signals['TRIX sell signal'] = 1
+        if latest_point['ppo_diff'][0] < 0:
+            print('ppo trend is bearish')
+            bearish_signals['PPO trend'] = 1
+        if latest_point['trix_diff'][0] < 0:
+            print('trix trend is bearish')
+            bearish_signals['TRIX trend'] = 1
+
+        return bearish_signals, bullish_signals, bullish_buy_signals, bearish_sell_signals
+
+    elif market_is == 'bullish':
+        # obv rising
+        if latest_point['obv_cl_ema_14_diff_ema9'][0] > trades_1d_tas['obv_cl_ema_14_diff_ema9'].std() * 0.5:
+            print('OBV is showing sign of bullish trend')
+            bullish_signals['OBV'] = 1
+
+        # RSI
+        if latest_point['rsi_cl_5'][0] > 50:
+            print('short-term RSI bullish signal')
+            bullish_signals['short-term RSI'] = 1
+        if latest_point['rsi_cl_14'][0] > 50:
+            print('mid-term RSI bullish signal')
+            bullish_signals['mid-term RSI'] = 1
+
+        # buy signals
+        if latest_point['rsi_5_buy_signal'][0] == 1:
+            print('RSI short-term buy signal!')
+            bullish_buy_signals['short-term RSI buy'] = 1
+        if latest_point['rsi_14_buy_signal'][0] == 1:
+            print('RSI mid-term buy signal!')
+            bullish_buy_signals['mid-term RSI buy'] = 1
+
+        # ADX
+        # for adx_14, should be increasing
+        # adx_5 should be above 25
+        # first check that trend is positive direction with plus and minus DI indicators
+        if latest_point['pldi'][0] > latest_point['mdi'][0]:
+            if latest_point['adx_14_diff_ema'][0] > 0:
+                print('mid-term adx EMA bullish signal')
+                bullish_signals['mid-term ADX'] = 1
+            if latest_point['adx_14'][0] > 25:
+                print('mid-term adx strong trend signal')
+                bullish_signals['mid-term ADX strong trend'] = 1
+            if latest_point['adx_5'][0] > 25:
+                print('adx short-term strong bullish signal')
+                bullish_signals['short-term ADX strong trend'] = 1
+
+        # PPO/TRIX
+        # if ppo_cl is above signal line (ppo_cl_signal), then bullish sign, especially if both below 0
+        # ppo_cl crossing signal line below zero is a buy signal, or bullish signal
+        if latest_point['ppo_buy_signal'][0] == 1:
+            print('PPO buy signal!')
+            bullish_buy_signals['PPO buy signal'] = 1
+        if latest_point['trix_buy_signal'][0] == 1:
+            print('TRIX buy signal!')
+            bullish_buy_signals['TRIX buy signal'] = 1
+        if latest_point['ppo_diff'][0] > 0:
+            print('ppo trend is bullish')
+            bullish_signals['PPO trend'] = 1
+        if latest_point['trix_diff'][0] > 0:
+            print('trix trend is bullish')
+            bullish_signals['TRIX trend'] = 1
+
+        return bullish_signals, bullish_buy_signals
+
+    elif market_is == 'bearish':
+        pass
 
 
-if market_is == 'bullish':
-    if latest_point['ppo_buy_signal'][0] == 1:
-        print('PPO buy signal!')
-    if latest_point['trix_buy_signal'][0] == 1:
-        print('TRIX buy signal')
-    if latest_point['ppo_diff'][0] > 0:
-        print('ppo trend is bullish')
-    if latest_point['trix_diff'][0] > 0:
-        print('trix trend is bullish')
 
 
-# if ppo_cl is above signal line (ppo_cl_signal), then bullish sign, especially if both below 0
-# ppo_cl crossing signal line below zero is a buy signal, or bullish signal
-# TODO: play around with slopes; feed historical data into neural network
+
+# TODO: play around with slopes of trix and ppo; feed historical data into neural network
+# TODO: atr trends https://www.investopedia.com/articles/trading/08/atr.asp
 
 
 
