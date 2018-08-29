@@ -829,9 +829,6 @@ def scan_all_quandl_stocks():
     sys.path.append('../../stock_prediction/code')
     import dl_quandl_EOD as dlq
     dfs = dlq.load_stocks()
-    # restrict to currently trading stocks
-
-    dfs = {t: df for t, df in dfs.items() if }
 
     bear_bull_scores = {}
     ta_dfs = {}
@@ -1510,6 +1507,23 @@ def add_stocks_to_watchlist(stocks):
         cur_tickers = pk.load(open(filename, 'rb'))
 
     tickers = sorted(list(set(cur_tickers + stocks)))
+    pk.dump(tickers, open(filename, 'wb'), -1)
+
+
+def remove_stocks_from_watchlist(stocks):
+    """
+    supply a list of stocks which gets removed from the pickle file
+    """
+    filename = 'tickers_watching.pk'
+    cur_tickers = []
+    if os.path.exists(filename):
+        cur_tickers = pk.load(open(filename, 'rb'))
+
+    for s in stocks:
+        if s in cur_tickers:
+            cur_tickers.remove(s)
+
+    tickers = sorted(list(set(cur_tickers)))
     pk.dump(tickers, open(filename, 'wb'), -1)
 
 
