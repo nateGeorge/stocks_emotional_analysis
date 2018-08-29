@@ -4,6 +4,7 @@ import os
 import time
 import operator
 import pickle as pk
+from pprint import pprint
 from collections import OrderedDict
 
 import datetime
@@ -885,8 +886,8 @@ def scan_all_quandl_stocks():
     # order by top bull signals
     # sorts from least to greatest
     sorted_overall_bear_bull = sorted(overall_bear_bull.items(), key=operator.itemgetter(1))
-    from pprint import pprint
     pprint(sorted_overall_bear_bull[-100:])
+    best_bulls = [s for s in sorted_overall_bear_bull if s[1] == 0.5]
 
 
     for b, v in overall_bear_bull.items():
@@ -1460,7 +1461,7 @@ def plot_col_vs_pct_chg(full_daily, ticker, col='entities.sentiment.basic'):
 # ['XLM']
 
 
-def get_stock_watchlist(update=True):
+def get_stock_watchlist(update=True, return_trending=False):
     """
     gets trending stocks and saves to pickle file of stocks to monitor
     """
@@ -1492,8 +1493,12 @@ def get_stock_watchlist(update=True):
         # only unique tickers
         tickers = sorted(list(set(cur_tickers + trending)))
         pk.dump(tickers, open(filename, 'wb'), -1)  # use highest available pk protocol
+        if return_trending:
+            return tickers, trending
         return tickers
     else:
+        if return_trending:
+            return cur_tickers, trending
         return cur_tickers
 
 
