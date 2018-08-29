@@ -2,6 +2,7 @@
 
 import os
 import time
+import operator
 import pickle as pk
 from collections import OrderedDict
 
@@ -742,7 +743,6 @@ def get_market_status_quandl(dfs):
     uses quandl data source
     """
     # TODO: use list of tickers and make it an argument so can scan sectors as well
-
     qqq_1day = dfs['QQQ']
     qqq_1day_tas = get_TAs(qqq_1day, source='quandl')
     bearish_signals_qqq, bullish_signals_qqq, bearish_sell_signals_qqq, bullish_buy_signals_qqq = get_bullish_bearish_signals(qqq_1day_tas, verbose=False)
@@ -785,8 +785,6 @@ def scan_watchlist():
     watchlist = get_stock_watchlist(update=False)
     for ticker in watchlist:
         print(ticker)
-        if ticker in ta_dfs.keys():
-            continue
         try:
             trades_1day = load_ib_data(ticker)
         except FileNotFoundError:
@@ -831,6 +829,10 @@ def scan_all_quandl_stocks():
     sys.path.append('../../stock_prediction/code')
     import dl_quandl_EOD as dlq
     dfs = dlq.load_stocks()
+    # restrict to currently trading stocks
+
+    dfs = {t: df for t, df in dfs.items() if }
+
     bear_bull_scores = {}
     ta_dfs = {}
     bear_sigs = {}
@@ -839,22 +841,16 @@ def scan_all_quandl_stocks():
     bear_sell_sigs = {}
     overall_bear_bull = {}
 
-    market_is = get_market_status_quandl()
-    watchlist = get_stock_watchlist(update=False)
-    for ticker in watchlist:
+    market_is = get_market_status_quandl(dfs)
+    for ticker in sorted(dfs.keys()):
         print(ticker)
-        if ticker in ta_dfs.keys():
-            continue
-        try:
-            trades_1day = load_ib_data(ticker)
-        except FileNotFoundError:
-            print('no trade data for', ticker)
-            continue
+        trades_1day = dfs[ticker]
 
+        # TODO: adapt so can handle smaller number of points
         if trades_1day.shape[0] < 50:  # need enough data for moving averages
             continue
 
-        trades_1day_tas = get_TAs(trades_1day)
+        trades_1day_tas = get_TAs(trades_1day, source='quandl')
         ta_dfs[ticker] = trades_1day_tas
         bearish_signals, bullish_signals, bearish_sell_signals, bullish_buy_signals = get_bullish_bearish_signals(trades_1day_tas, verbose=False)
         bear_sigs[ticker] = bearish_signals
@@ -880,9 +876,31 @@ def scan_all_quandl_stocks():
     # get bulls with over 0.25 scores overall (at least half of bullish signals triggering)
 
     # TODO: find most recent buy signals
+
+    # for now, just get stocks with buy signals today
+    has_buy_sigs = {}
+    for t in bull_buy_sigs.keys():
+        buy_sigs = sum(bull_buy_sigs[t].values())
+        if buy_sigs > 0:
+            has_buy_sigs[t] = bull_buy_sigs[t]
+
+
+    # order by top bull signals
+    # sorts from least to greatest
+    sorted_overall_bear_bull = sorted(overall_bear_bull.items(), key=operator.itemgetter(1))
+    from pprint import pprint
+    pprint(sorted_overall_bear_bull[-100:])
+
+
     for b, v in overall_bear_bull.items():
         if v >= 0.25:
             print(b, v)
+
+    current_portfolio = ['BJ', 'CRON', 'NEPT', 'TLRY', 'CGC', 'BILI', 'MOMO', 'SQ', 'DDD', 'TTD', 'AOBC', 'LVVV']
+
+    for c in current_portfolio:
+        print(c)
+        print(overall_bear_bull[c])
 
 
 # TODO: get trend of sector and even more specific sector, e.g. related stocks (like marijuana stocks for CRON)
