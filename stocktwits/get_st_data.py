@@ -818,12 +818,47 @@ def scan_watchlist():
         overall_bear_bull[ticker] = overall
 
 
+    # sorted from bull to bears
+    sorted_overall_bear_bull = sorted(overall_bear_bull.items(), key=operator.itemgetter(1))
+
     # get bulls with over 0.25 scores overall (at least half of bullish signals triggering)
 
     # TODO: find most recent buy signals
     for b, v in overall_bear_bull.items():
         if v >= 0.25:
             print(b, v)
+
+    # now get most recent buy/sell signals
+    days_since_buy_signals = {}
+    days_since_sell_signals = {}
+    avg_days_since_buy_sigs = {}
+    avg_days_since_sell_sigs = {}
+    for t in ta_dfs.keys():
+        days_since_buy_signals[t] = {}
+        days_since_sell_signals[t] = {}
+        days_since_buy_signals[t]['ppo'] = (ta_dfs[t].index.max() - ta_dfs[t][ta_dfs[t]['ppo_buy_signal'] == 1].index.max()).days
+        days_since_buy_signals[t]['trix'] = (ta_dfs[t].index.max() - ta_dfs[t][ta_dfs[t]['trix_buy_signal'] == 1].index.max()).days
+        days_since_buy_signals[t]['rsi_short'] = (ta_dfs[t].index.max() - ta_dfs[t][ta_dfs[t]['rsi_5_buy_signal'] == 1].index.max()).days
+        days_since_buy_signals[t]['rsi_mid'] = (ta_dfs[t].index.max() - ta_dfs[t][ta_dfs[t]['rsi_14_buy_signal'] == 1].index.max()).days
+        days_since_sell_signals[t]['ppo'] = (ta_dfs[t].index.max() - ta_dfs[t][ta_dfs[t]['ppo_sell_signal'] == 1].index.max()).days
+        days_since_sell_signals[t]['trix'] = (ta_dfs[t].index.max() - ta_dfs[t][ta_dfs[t]['trix_sell_signal'] == 1].index.max()).days
+        days_since_sell_signals[t]['rsi_short'] = (ta_dfs[t].index.max() - ta_dfs[t][ta_dfs[t]['rsi_5_sell_signal'] == 1].index.max()).days
+        days_since_sell_signals[t]['rsi_mid'] = (ta_dfs[t].index.max() - ta_dfs[t][ta_dfs[t]['rsi_14_sell_signal'] == 1].index.max()).days
+
+        avg_days_since_buy_sigs[t] = np.mean([v for v in days_since_buy_signals[t].values()])
+        avg_days_since_sell_sigs[t] = np.mean([v for v in days_since_sell_signals[t].values()])
+
+    # sorted from shorted times to longest
+    sorted_avg_buy_days = sorted(avg_days_since_buy_sigs.items(), key=operator.itemgetter(1))
+    sorted_avg_sell_days = sorted(avg_days_since_sell_sigs.items(), key=operator.itemgetter(1))
+    # add overall bear_bull to mix, and bear/bull individually
+    for i, s in enumerate(sorted_avg_buy_days):
+        sorted_avg_buy_days[i] = s + (overall_bear_bull[s[0]],)
+
+    for i, s in enumerate(sorted_avg_sell_days):
+        sorted_avg_sell_days[i] = s + (overall_bear_bull[s[0]],)
+
+
 
 
 def scan_all_quandl_stocks():
@@ -873,8 +908,6 @@ def scan_all_quandl_stocks():
 
     # get bulls with over 0.25 scores overall (at least half of bullish signals triggering)
 
-    # TODO: find most recent buy signals
-
     # for now, just get stocks with buy signals today
     has_buy_sigs = {}
     for t in bull_buy_sigs.keys():
@@ -887,7 +920,41 @@ def scan_all_quandl_stocks():
     # sorts from least to greatest
     sorted_overall_bear_bull = sorted(overall_bear_bull.items(), key=operator.itemgetter(1))
     pprint(sorted_overall_bear_bull[-100:])
-    best_bulls = [s for s in sorted_overall_bear_bull if s[1] == 0.5]
+    # at least half of bull signals are triggered...ish
+    best_bulls = [s for s in sorted_overall_bear_bull if s[1] >= 0.25]
+    best_bull_tickers = set(s[0] for s in best_bulls)
+
+    # now get most recent buy/sell signals
+    days_since_buy_signals = {}
+    days_since_sell_signals = {}
+    avg_days_since_buy_sigs = {}
+    avg_days_since_sell_sigs = {}
+    for t in ta_dfs.keys():
+        days_since_buy_signals[t] = {}
+        days_since_sell_signals[t] = {}
+        days_since_buy_signals[t]['ppo'] = (ta_dfs[t].index.max() - ta_dfs[t][ta_dfs[t]['ppo_buy_signal'] == 1].index.max()).days
+        days_since_buy_signals[t]['trix'] = (ta_dfs[t].index.max() - ta_dfs[t][ta_dfs[t]['trix_buy_signal'] == 1].index.max()).days
+        days_since_buy_signals[t]['rsi_short'] = (ta_dfs[t].index.max() - ta_dfs[t][ta_dfs[t]['rsi_5_buy_signal'] == 1].index.max()).days
+        days_since_buy_signals[t]['rsi_mid'] = (ta_dfs[t].index.max() - ta_dfs[t][ta_dfs[t]['rsi_14_buy_signal'] == 1].index.max()).days
+        days_since_sell_signals[t]['ppo'] = (ta_dfs[t].index.max() - ta_dfs[t][ta_dfs[t]['ppo_sell_signal'] == 1].index.max()).days
+        days_since_sell_signals[t]['trix'] = (ta_dfs[t].index.max() - ta_dfs[t][ta_dfs[t]['trix_sell_signal'] == 1].index.max()).days
+        days_since_sell_signals[t]['rsi_short'] = (ta_dfs[t].index.max() - ta_dfs[t][ta_dfs[t]['rsi_5_sell_signal'] == 1].index.max()).days
+        days_since_sell_signals[t]['rsi_mid'] = (ta_dfs[t].index.max() - ta_dfs[t][ta_dfs[t]['rsi_14_sell_signal'] == 1].index.max()).days
+
+        avg_days_since_buy_sigs[t] = np.mean([v for v in days_since_buy_signals[t].values()])
+        avg_days_since_sell_sigs[t] = np.mean([v for v in days_since_sell_signals[t].values()])
+
+    # sorted from shorted times to longest
+    sorted_avg_buy_days = sorted(avg_days_since_buy_sigs.items(), key=operator.itemgetter(1))
+    sorted_avg_sell_days = sorted(avg_days_since_sell_sigs.items(), key=operator.itemgetter(1))
+    # add overall bear_bull to mix, and bear/bull individually
+    for i, s in enumerate(sorted_avg_buy_days):
+        sorted_avg_buy_days[i] = s + (overall_bear_bull[s[0]],)
+
+    for i, s in enumerate(sorted_avg_sell_days):
+        sorted_avg_sell_days[i] = s + (overall_bear_bull[s[0]],)
+
+    top_sorted_avg_buy_days = [s for s in sorted_avg_buy_days if s[2] >= 0.25]
 
 
     for b, v in overall_bear_bull.items():
@@ -902,6 +969,8 @@ def scan_all_quandl_stocks():
 
 
 # TODO: get trend of sector and even more specific sector, e.g. related stocks (like marijuana stocks for CRON)
+
+# TODO: plot average gain between buy/signals
 
 
 def check_buy_sell_signals():
