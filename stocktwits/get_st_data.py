@@ -573,13 +573,22 @@ def load_ib_data(ticker, timeframe='1D'):
         return trades_1d
 
 
-def get_TAs(trades_1d):
+def get_TAs(trades_1d, source='ib'):
+    """
+    intended for daily data; for different frequencies, the periods of TAs should maybe be adjusted
+
+    takes a 1d data dataframe
+    source is either 'ib' or 'quandl', determines the col names for ohlcv_cols
+    """
     import talib
     import sys
     sys.path.append('../../stock_prediction/code')
     sys.path.append('../stock_prediction/code')
     import calculate_ta_signals as cts
-    trades_1d_ta = cts.create_tas(trades_1d.copy(), ohlcv_cols=['open', 'high', 'low', 'close', 'volume'], return_df=True, tp=False)
+    if source == 'ib':
+        trades_1d_ta = cts.create_tas(trades_1d.copy(), ohlcv_cols=['open', 'high', 'low', 'close', 'volume'], return_df=True, tp=False)
+    elif source == 'quandl':
+        trades_1d_ta = cts.create_tas(trades_1d.copy(), ohlcv_cols=['Adj_Open', 'Adj_High', 'Adj_Low', 'Adj_Close', 'Adj_Volume'], return_df=True, tp=False)
 
     keep_tas = ['atr_5',
                 'atr_14',
@@ -679,13 +688,15 @@ def load_cron():
     # TODO: plot with TAs
 
 
-def get_market_status():
+def get_market_status_ib():
     """
     gets if the market is bearish, bullish, or neutral
     for QQQ, DIA, SPY, IJR, IJH
     nasdaq, dow, and sp indexes
 
     also checks for buy/sell signals
+
+    uses interactive brokers data
     """
     # TODO: use list of tickers and make it an argument so can scan sectors as well
     ticker = 'QQQ'
@@ -720,6 +731,47 @@ def get_market_status():
     return market_is
 
 
+def get_market_status_quandl(dfs):
+    """
+    gets if the market is bearish, bullish, or neutral
+    for QQQ, DIA, SPY, IJR, IJH
+    nasdaq, dow, and sp indexes
+
+    also checks for buy/sell signals
+
+    uses quandl data source
+    """
+    # TODO: use list of tickers and make it an argument so can scan sectors as well
+
+    qqq_1day = dfs['QQQ']
+    qqq_1day_tas = get_TAs(qqq_1day, source='quandl')
+    bearish_signals_qqq, bullish_signals_qqq, bearish_sell_signals_qqq, bullish_buy_signals_qqq = get_bullish_bearish_signals(qqq_1day_tas, verbose=False)
+    spy_1day = dfs['SPY']
+    spy_1day_tas = get_TAs(spy_1day, source='quandl')
+    bearish_signals_spy, bullish_signals_spy, bearish_sell_signals_spy, bullish_buy_signals_spy = get_bullish_bearish_signals(spy_1day_tas, verbose=False)
+    dia_1day = dfs['DIA']
+    dia_1day_tas = get_TAs(dia_1day, source='quandl')
+    bearish_signals_dia, bullish_signals_dia, bearish_sell_signals_dia, bullish_buy_signals_dia = get_bullish_bearish_signals(dia_1day_tas, verbose=False)
+
+    # get overall market trend
+    bearish_totals =  -np.mean(list(bearish_signals_qqq.values()) + list(bearish_signals_spy.values()) + list(bearish_signals_dia.values()))
+    bullish_totals =  np.mean(list(bullish_signals_qqq.values()) + list(bullish_signals_spy.values()) + list(bullish_signals_dia.values()))
+
+    overall = np.mean([bearish_totals, bullish_totals])
+    print('average of all bearish/bullish signals:', overall)
+    if overall > 0.05:
+        print('bullish market!')
+        market_is = 'bullish'
+    elif overall < -0.05:
+        print('bearish market!')
+        market_is = 'bearish'
+    else:
+        print('somewhat neutral market')
+        market_is = None
+
+    return market_is
+
+
 def scan_watchlist():
     bear_bull_scores = {}
     ta_dfs = {}
@@ -729,7 +781,7 @@ def scan_watchlist():
     bear_sell_sigs = {}
     overall_bear_bull = {}
 
-    market_is = get_market_status()
+    market_is = get_market_status_ib()
     watchlist = get_stock_watchlist(update=False)
     for ticker in watchlist:
         print(ticker)
@@ -774,6 +826,63 @@ def scan_watchlist():
         if v >= 0.25:
             print(b, v)
 
+
+def scan_all_quandl_stocks():
+    sys.path.append('../../stock_prediction/code')
+    import dl_quandl_EOD as dlq
+    dfs = dlq.load_stocks()
+    bear_bull_scores = {}
+    ta_dfs = {}
+    bear_sigs = {}
+    bull_sigs = {}
+    bull_buy_sigs = {}
+    bear_sell_sigs = {}
+    overall_bear_bull = {}
+
+    market_is = get_market_status_quandl()
+    watchlist = get_stock_watchlist(update=False)
+    for ticker in watchlist:
+        print(ticker)
+        if ticker in ta_dfs.keys():
+            continue
+        try:
+            trades_1day = load_ib_data(ticker)
+        except FileNotFoundError:
+            print('no trade data for', ticker)
+            continue
+
+        if trades_1day.shape[0] < 50:  # need enough data for moving averages
+            continue
+
+        trades_1day_tas = get_TAs(trades_1day)
+        ta_dfs[ticker] = trades_1day_tas
+        bearish_signals, bullish_signals, bearish_sell_signals, bullish_buy_signals = get_bullish_bearish_signals(trades_1day_tas, verbose=False)
+        bear_sigs[ticker] = bearish_signals
+        bull_sigs[ticker] = bullish_signals
+        bear_sell_sigs[ticker] = bearish_sell_signals
+        bull_buy_sigs[ticker] = bullish_buy_signals
+
+        # screen for buy/sell signals
+        sell_sigs = np.sum(list(bearish_sell_signals.values()))
+        buy_sigs = np.sum(list(bullish_buy_signals.values()))
+        if sell_sigs > 0:
+            print(sell_sigs, 'sell signals for', ticker)
+        if buy_sigs > 0:
+            print(buy_sigs, 'buy signals for', ticker)
+
+        bearish_totals =  -np.mean(list(bear_sigs[ticker].values()))
+        bullish_totals =  np.mean(list(bull_sigs[ticker].values()))
+
+        overall = np.mean([bearish_totals, bullish_totals])
+        overall_bear_bull[ticker] = overall
+
+
+    # get bulls with over 0.25 scores overall (at least half of bullish signals triggering)
+
+    # TODO: find most recent buy signals
+    for b, v in overall_bear_bull.items():
+        if v >= 0.25:
+            print(b, v)
 
 
 # TODO: get trend of sector and even more specific sector, e.g. related stocks (like marijuana stocks for CRON)
