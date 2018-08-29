@@ -859,8 +859,6 @@ def scan_watchlist():
         sorted_avg_sell_days[i] = s + (overall_bear_bull[s[0]],)
 
 
-
-
 def scan_all_quandl_stocks():
     sys.path.append('../../stock_prediction/code')
     import dl_quandl_EOD as dlq
