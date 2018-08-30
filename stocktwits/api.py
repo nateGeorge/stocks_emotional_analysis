@@ -24,7 +24,7 @@ EXCHANGES = ['NYSE', 'NASDAQ', 'NYSEMkt', 'NYSEArca']
 def get_watched_stocks(wl_id):
     """ Get list of symbols being watched by specified StockTwits watchlist
     """
-    wl = R.get_json(ST_BASE_URL + 'watchlists/show/{}.json'.format(wl_id), params=ST_BASE_PARAMS)
+    wl, req_left, reset_time = R.get_json(ST_BASE_URL + 'watchlists/show/{}.json'.format(wl_id), params=ST_BASE_PARAMS)
     wl = wl['watchlist']['symbols']
     return [s['symbol'] for s in wl]
 
@@ -54,7 +54,7 @@ def add_to_watchlist(symbols, wl_id):
     symbols = ','.join(symbols)  # must be a csv list
     params = ST_BASE_PARAMS.copy()
     params['symbols'] = symbols
-    resp = R.post_json(ST_BASE_URL + 'watchlists/{}/symbols/create.json'.format(wl_id), params=params, deadline=deadline)
+    resp, req_left, reset_time = R.post_json(ST_BASE_URL + 'watchlists/{}/symbols/create.json'.format(wl_id), params=params, deadline=deadline)
     if resp['response']['status'] == 200:
         return [s['symbol'] for s in resp['symbols']]
     else:
@@ -66,7 +66,7 @@ def delete_from_watchlist(symbol, wl_id):
     """
     params = ST_BASE_PARAMS.copy()
     params['symbols'] = symbol
-    resp = R.post_json(ST_BASE_URL + 'watchlists/{}/symbols/destroy.json'.format(wl_id), params=params)
+    resp, req_left, reset_time = R.post_json(ST_BASE_URL + 'watchlists/{}/symbols/destroy.json'.format(wl_id), params=params)
     if resp['response']['status'] == 200:
         return True
     else:
@@ -74,18 +74,29 @@ def delete_from_watchlist(symbol, wl_id):
 
 
 def get_trending_stocks():
-    """ returns list of trending stock symbols, ensuring each symbol is part of a NYSE or NASDAQ
+    """ returns list of trending stock symbols,
+    used to ensure each symbol is part of a NYSE or NASDAQ but doesn't seem to be available anymore
+
+    returns a lot more than visible on the site
+    seems to return in order of trending most
     """
-    trending = R.get_json(ST_BASE_URL + 'trending/symbols.json', params=ST_BASE_PARAMS)['symbols']
-    symbols = [s['symbol'] for s in trending if s['exchange'] in EXCHANGES]
+    trending, req_left, reset_time = R.get_json(ST_BASE_URL + 'trending/symbols.json', params=ST_BASE_PARAMS)
+    if trending is False:
+        return None
+
+    trending = trending['symbols']
+    # exchange does not seem to be in there anymore
+    # symbols = [s['symbol'] for s in trending if s['exchange'] in EXCHANGES]
+    symbols = [s['symbol'] for s in trending]
     return symbols
 
 
 def clean_watchlist(wl_id):
     """ Deletes stocks to follow if they aren't part of NASDAQ or NYSE
     """
-    wl = R.get_json(ST_BASE_URL + 'watchlists/show/{}.json'.format(wl_id),
-                  params=ST_BASE_PARAMS)['watchlist']['symbols']
+    wl, req_left, reset_time = R.get_json(ST_BASE_URL + 'watchlists/show/{}.json'.format(wl_id),
+                  params=ST_BASE_PARAMS)
+    wl = ['watchlist']['symbols']
     qty_deleted = 0
     for sym in wl:
         if sym['exchange'] not in EXCHANGES:

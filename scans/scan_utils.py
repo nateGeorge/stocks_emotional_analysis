@@ -633,6 +633,14 @@ def scan_all_quandl_stocks():
     sorted_rsi_short_buy_days = sorted(rsi_short_term_buy_signals.items(), key=operator.itemgetter(1))
     sorted_rsi_mid_buy_days = sorted(rsi_mid_term_buy_signals.items(), key=operator.itemgetter(1))
 
+    mid_buy_1_day_ago = [s[0] for s in sorted_rsi_mid_buy_days if s[1] <= 1]
+    mid_buy_bear_bull = [overall_bear_bull[s] for s in mid_buy_1_day_ago]
+    sorted_idx = np.argsort(mid_buy_bear_bull)[::-1]
+    np.array(list(zip(mid_buy_1_day_ago, mid_buy_bear_bull)))[sorted_idx]
+
+
+
+
     # add overall bear_bull to mix, and bear/bull individually
     for i, s in enumerate(sorted_avg_buy_days):
         sorted_avg_buy_days[i] = s + (overall_bear_bull[s[0]],)
