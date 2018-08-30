@@ -117,39 +117,39 @@ def get_TAs(trades_1d, source='ib'):
 def get_bullish_bearish_signals(trades_1d_tas, market_is=None, verbose=True):
     # initialize all as 0s
     bullish_signals = OrderedDict({
-                        'OBV': 0,
-                        'short-term RSI': 0,
-                        'mid-term RSI': 0,
-                        'mid-term ADX': 0,
-                        'mid-term ADX strong trend': 0,
-                        'short-term ADX strong trend': 0,
-                        'PPO trend': 0,
-                        'TRIX trend': 0
+                        'bull_OBV': 0,
+                        'bull_short-term_RSI': 0,
+                        'bull_mid-term_RSI': 0,
+                        'bull_midterm_ADX': 0,
+                        'bull_midterm_ADX_strong_trend': 0,
+                        'bull_shortterm_ADX_strong_trend': 0,
+                        'bull_PPO_trend': 0,
+                        'bull_TRIX_trend': 0
                         })
 
     bullish_buy_signals = OrderedDict({
-                                        'PPO buy signal': 0,
-                                        'TRIX buy signal': 0,
-                                        'short-term RSI buy': 0,
-                                        'mid-term RSI buy': 0
+                                        'PPO_buy': 0,
+                                        'TRIX_buy': 0,
+                                        'shortterm_RSI_buy': 0,
+                                        'midterm_RSI_buy': 0
                                         })
 
     bearish_signals = OrderedDict({
-                        'OBV': 0,
-                        'short-term RSI': 0,
-                        'mid-term RSI': 0,
-                        'mid-term ADX': 0,
-                        'mid-term ADX strong trend': 0,
-                        'short-term ADX strong trend': 0,
-                        'PPO trend': 0,
-                        'TRIX trend': 0
+                        'bear_OBV': 0,
+                        'bear_shortterm_RSI': 0,
+                        'bear_midterm_RSI': 0,
+                        'bear_midterm_ADX': 0,
+                        'bear_midterm_ADX_strong_trend': 0,
+                        'bear_shortterm_ADX_strong_trend': 0,
+                        'bear_PPO_trend': 0,
+                        'bear_TRIX_trend': 0
                         })
 
     bearish_sell_signals = OrderedDict({
-                                        'PPO sell signal': 0,
-                                        'TRIX sell signal': 0,
-                                        'short-term RSI sell': 0,
-                                        'mid-term RSI sell': 0
+                                        'PPO_sell': 0,
+                                        'TRIX_sell': 0,
+                                        'shortterm_RSI_sell': 0,
+                                        'midterm_RSI_sell': 0
                                         })
 
     latest_point = trades_1d_tas.iloc[-1].to_frame().T
@@ -162,77 +162,77 @@ def get_bullish_bearish_signals(trades_1d_tas, market_is=None, verbose=True):
         if latest_point['obv_cl_ema_14_diff_ema9'][0] > trades_1d_tas['obv_cl_ema_14_diff_ema9'].std() * 0.5:
             if verbose:
                 print('OBV is showing sign of bullish trend')
-            bullish_signals['OBV'] = 1
+            bullish_signals['bull_OBV'] = 1
         elif latest_point['obv_cl_ema_14_diff_ema9'][0] < trades_1d_tas['obv_cl_ema_14_diff_ema9'].std() * 0.5:
             if verbose:
                 print('OBV is showing sign of bearish trend')
-            bearish_signals['OBV'] = 1
+            bearish_signals['bear_OBV'] = 1
 
         # RSI
         if latest_point['rsi_cl_5'][0] > 50:
             if verbose:
                 print('short-term RSI bullish signal')
-            bullish_signals['short-term RSI'] = 1
+            bullish_signals['bull_shortterm_RSI'] = 1
         else:
             if verbose:
                 print('short-term RSI bearish signal')
-            bearish_signals['short-term RSI'] = 1
+                bearish_signals['bear_shortterm_RSI'] = 1
         if latest_point['rsi_cl_14'][0] > 50:
             if verbose:
                 print('mid-term RSI bullish signal')
-            bullish_signals['mid-term RSI'] = 1
+            bullish_signals['bull_midterm_RSI'] = 1
         else:
             if verbose:
                 print('mid-term RSI bearish signal')
-            bearish_signals['mid-term RSI'] = 1
+            bearish_signals['bear_midterm_RSI'] = 1
 
         # buy signals
         if latest_point['rsi_5_buy_signal'][0] == 1:
             if verbose:
                 print('RSI short-term buy signal!')
-            bullish_buy_signals['short-term RSI buy'] = 1
+            bullish_buy_signals['bull_shortterm_RSI_buy'] = 1
         if latest_point['rsi_14_buy_signal'][0] == 1:
             if verbose:
                 print('RSI mid-term buy signal!')
-            bullish_buy_signals['mid-term RSI buy'] = 1
+                bullish_buy_signals['bull_midterm_RSI_buy'] = 1
 
         # sell signals
         if latest_point['rsi_5_sell_signal'][0] == 1:
             if verbose:
                 print('RSI short-term sell signal!')
-            bearish_buy_signals['short-term RSI sell'] = 1
+            bearish_buy_signals['shortterm_RSI_sell'] = 1
         if latest_point['rsi_14_sell_signal'][0] == 1:
             if verbose:
                 print('RSI mid-term sell signal!')
-            bearish_buy_signals['mid-term RSI sell'] = 1
+            bearish_buy_signals['midterm_RSI_sell'] = 1
 
         # ADX
         if latest_point['pldi'][0] > latest_point['mdi'][0]:
             if latest_point['adx_14_diff_ema'][0] > 0:
                 if verbose:
                     print('mid-term adx EMA bullish signal')
-                bullish_signals['mid-term ADX'] = 1
+                bullish_signals['bull_midterm_ADX'] = 1
             if latest_point['adx_14'][0] > 25:
                 if verbose:
                     print('mid-term adx strong trend signal')
-                bullish_signals['mid-term ADX strong trend'] = 1
+                bullish_signals['bull_midterm_ADX_strong_trend'] = 1
             if latest_point['adx_5'][0] > 25:
                 if verbose:
                     print('adx short-term strong bullish signal')
-                bullish_signals['short-term ADX strong trend'] = 1
+                bullish_signals['bull_shortterm_ADX_strong_trend'] = 1
         else:
             if latest_point['adx_14_diff_ema'][0] > 0:
                 if verbose:
                     print('mid-term adx EMA bearish signal')
-                bearish_signals['mid-term ADX'] = 1
+                bearish_signals['bear_midterm_ADX'] = 1
             if latest_point['adx_14'][0] > 25:
                 if verbose:
                     print('mid-term adx strong trend signal')
-                bearish_signals['mid-term ADX strong trend'] = 1
+                bearish_signals['bear_midterm_ADX_strong_trend'] = 1
             if latest_point['adx_5'][0] > 25:
                 if verbose:
                     print('adx short-term strong bullish signal')
-                bearish_signals['short-term ADX strong trend'] = 1
+                bearish_signals['bear_shortterm_ADX_strong_trend'] = 1
 
 
         # PPO/TRIX
@@ -241,39 +241,40 @@ def get_bullish_bearish_signals(trades_1d_tas, market_is=None, verbose=True):
         if latest_point['ppo_buy_signal'][0] == 1:
             if verbose:
                 print('PPO buy signal!')
-            bullish_buy_signals['PPO buy signal'] = 1
+            bullish_buy_signals['PPO_buy'] = 1
         if latest_point['trix_buy_signal'][0] == 1:
             if verbose:
                 print('TRIX buy signal!')
-            bullish_buy_signals['TRIX buy signal'] = 1
+            bullish_buy_signals['TRIX_buy'] = 1
         if latest_point['ppo_diff'][0] > 0:
             if verbose:
                 print('ppo trend is bullish')
-            bullish_signals['PPO trend'] = 1
+            bullish_signals['bull_PPO_trend'] = 1
         if latest_point['trix_diff'][0] > 0:
             if verbose:
                 print('trix trend is bullish')
-            bullish_signals['TRIX trend'] = 1
+            bullish_signals['bull_TRIX_trend'] = 1
 
         if latest_point['ppo_sell_signal'][0] == 1:
             if verbose:
                 print('PPO sell signal!')
-            bearish_buy_signals['PPO sell signal'] = 1
+            bearish_buy_signals['PPO_sell'] = 1
         if latest_point['trix_sell_signal'][0] == 1:
             if verbose:
                 print('TRIX sell signal!')
-            bullish_buy_signals['TRIX sell signal'] = 1
+            bullish_buy_signals['TRIX_sell'] = 1
         if latest_point['ppo_diff'][0] < 0:
             if verbose:
                 print('ppo trend is bearish')
-            bearish_signals['PPO trend'] = 1
+            bearish_signals['bear_PPO_trend'] = 1
         if latest_point['trix_diff'][0] < 0:
             if verbose:
                 print('trix trend is bearish')
-            bearish_signals['TRIX trend'] = 1
+            bearish_signals['bear_TRIX_trend'] = 1
 
         return bearish_signals, bullish_signals, bearish_sell_signals, bullish_buy_signals
-
+    # would rather have all bear/bull signals than restrict to just one based on market conditions
+    """
     elif market_is == 'bullish':
         # obv rising
         if latest_point['obv_cl_ema_14_diff_ema9'][0] > trades_1d_tas['obv_cl_ema_14_diff_ema9'].std() * 0.5:
@@ -343,17 +344,18 @@ def get_bullish_bearish_signals(trades_1d_tas, market_is=None, verbose=True):
 
     elif market_is == 'bearish':
         pass
+    """
 
 
 def get_bearish_bullish_full_df(df):
     # test for both bearish and bullish signals
     # this is mainly intended for getting trends of the market/sector/related stocks, etc
     new_columns = ['OBV_bear_bull',
-                    'short-term_RSI_bear_bull',
-                    'mid-term_RSI_bear_bull',
-                    'mid-term_ADX_bear_bull',
-                    'mid-term_ADX_strong_trend_bear_bull',
-                    'short-term_ADX_strong_trend_bear_bull',
+                    'shortterm_RSI_bear_bull',
+                    'midterm_RSI_bear_bull',
+                    'midterm_ADX_bear_bull',
+                    'midterm_ADX_strong_trend_bear_bull',
+                    'shortterm_ADX_strong_trend_bear_bull',
                     'PPO_trend_bear_bull',
                     'TRIX_trend_bear_bull']
     for c in new_columns:
@@ -368,30 +370,30 @@ def get_bearish_bullish_full_df(df):
 
         # RSI
         if latest_point['rsi_cl_5'][0] > 50:
-            df.loc[idx, 'short-term_RSI_bear_bull'] = 1
+            df.loc[idx, 'shortterm_RSI_bear_bull'] = 1
         else:
-            df.loc[idx, 'short-term_RSI_bear_bull'] = -1
+            df.loc[idx, 'shortterm_RSI_bear_bull'] = -1
         if latest_point['rsi_cl_14'][0] > 50:
-            df.loc[idx, 'mid-term_RSI_bear_bull'] = 1
+            df.loc[idx, 'midterm_RSI_bear_bull'] = 1
         else:
 
-            df.loc[idx, 'mid-term_RSI_bear_bull'] = -1
+            df.loc[idx, 'midterm_RSI_bear_bull'] = -1
 
         # ADX
         if latest_point['pldi'][0] > latest_point['mdi'][0]:
             if latest_point['adx_14_diff_ema'][0] > 0:
-                df.loc[idx, 'mid-term_ADX_bear_bull'] = 1
+                df.loc[idx, 'midterm_ADX_bear_bull'] = 1
             if latest_point['adx_14'][0] > 25:
-                df.loc[idx, 'mid-term_ADX_strong_trend_bear_bull'] = 1
+                df.loc[idx, 'midterm_ADX_strong_trend_bear_bull'] = 1
             if latest_point['adx_5'][0] > 25:
                 df.loc[idx, 'short-term_ADX_strong_trend_bear_bull'] = 1
         else:
             if latest_point['adx_14_diff_ema'][0] > 0:
-                df.loc[idx, 'mid-term_ADX_bear_bull'] = -1
+                df.loc[idx, 'midterm_ADX_bear_bull'] = -1
             if latest_point['adx_14'][0] > 25:
-                df.loc[idx, 'mid-term_ADX_strong_trend_bear_bull'] = -1
+                df.loc[idx, 'midterm_ADX_strong_trend_bear_bull'] = -1
             if latest_point['adx_5'][0] > 25:
-                df.loc[idx, 'short-term_ADX_strong_trend_bear_bull'] = -1
+                df.loc[idx, 'shortterm_ADX_strong_trend_bear_bull'] = -1
 
 
         # PPO/TRIX
@@ -536,107 +538,143 @@ def scan_watchlist():
 
 
 def scan_all_quandl_stocks():
+    # load full dataframe with all stocks
     sys.path.append('../../stock_prediction/code')
     import dl_quandl_EOD as dlq
     dfs = dlq.load_stocks()
 
-    bear_bull_scores = {}
+    # bear_bull_scores = {}
     ta_dfs = {}
-    bear_sigs = {}
-    bull_sigs = {}
-    bull_buy_sigs = {}
-    bear_sell_sigs = {}
-    overall_bear_bull = {}
+    # bear_sigs = {}
+    # bull_sigs = {}
+    # bull_buy_sigs = {}
+    # bear_sell_sigs = {}
+    # overall_bear_bull = {}
 
+    # dataframe for storing all bear/bull signals
+    bear_bull_sigs_df = pd.DataFrame()
+    # cols = None  # column names for df
+
+    # get market status, although this is not necessary
     market_is = get_market_status_quandl(dfs)
-    for ticker in sorted(dfs.keys()):
-        print(ticker)
-        trades_1day = dfs[ticker]
+    for t in sorted(dfs.keys()):
+        print(t)
+        trades_1day = dfs[t]
 
         # TODO: adapt so can handle smaller number of points
         if trades_1day.shape[0] < 50:  # need enough data for moving averages
             continue
 
+        # get TAs
         trades_1day_tas = get_TAs(trades_1day, source='quandl')
-        ta_dfs[ticker] = trades_1day_tas
+        ta_dfs[t] = trades_1day_tas
+
+        # get bear/bull signals
         bearish_signals, bullish_signals, bearish_sell_signals, bullish_buy_signals = get_bullish_bearish_signals(trades_1day_tas, verbose=False)
-        bear_sigs[ticker] = bearish_signals
-        bull_sigs[ticker] = bullish_signals
-        bear_sell_sigs[ticker] = bearish_sell_signals
-        bull_buy_sigs[ticker] = bullish_buy_signals
+        # if cols is None:
+        #     cols = ['bear_' + b.replace(' ', '_') for b in bearish_signals.keys()] + \
+        #             ['bull_' + b.replace(' ', '_') for b in bullish_signals.keys()] + \
+        #             ['bear_' + b.replace(' ', '_') for b in bearish_sell_signals.keys()] + \
+        #             ['bear_' + b.replace(' ', '_') for b in bearish_sell_signals.keys()]
+        #     bear_sigs_cols = ['bear_' + b.replace(' ', '_') for b in bearish_signals.keys()]
+        #     bull_sigs_cols = ['bull_' + b.replace(' ', '_') for b in bullish_signals.keys()]
+
+        temp_df = pd.DataFrame({**bearish_signals, **bullish_signals, **bearish_sell_signals, **bullish_buy_signals}, index=[t])
+        # temp_df.columns = cols
+        temp_df['days_since_ppo_buy'] = (ta_dfs[t].index.max() - ta_dfs[t][ta_dfs[t]['ppo_buy_signal'] == 1].index.max()).days
+        temp_df['days_since_trix_buy'] = (ta_dfs[t].index.max() - ta_dfs[t][ta_dfs[t]['trix_buy_signal'] == 1].index.max()).days
+        temp_df['days_since_short_rsi_buy'] = (ta_dfs[t].index.max() - ta_dfs[t][ta_dfs[t]['rsi_5_buy_signal'] == 1].index.max()).days
+        temp_df['days_since_mid_rsi_buy'] = (ta_dfs[t].index.max() - ta_dfs[t][ta_dfs[t]['rsi_14_buy_signal'] == 1].index.max()).days
+        temp_df['days_since_ppo_sell'] = (ta_dfs[t].index.max() - ta_dfs[t][ta_dfs[t]['ppo_sell_signal'] == 1].index.max()).days
+        temp_df['days_since_trix_sell'] = (ta_dfs[t].index.max() - ta_dfs[t][ta_dfs[t]['trix_sell_signal'] == 1].index.max()).days
+        temp_df['days_since_short_rsi_buy'] = (ta_dfs[t].index.max() - ta_dfs[t][ta_dfs[t]['rsi_5_sell_signal'] == 1].index.max()).days
+        temp_df['days_since_mid_rsi_buy'] = (ta_dfs[t].index.max() - ta_dfs[t][ta_dfs[t]['rsi_14_sell_signal'] == 1].index.max()).days
+
+        # bear_sigs[ticker] = bearish_signals
+        # bull_sigs[ticker] = bullish_signals
+        # bear_sell_sigs[ticker] = bearish_sell_signals
+        # bull_buy_sigs[ticker] = bullish_buy_signals
 
         # screen for buy/sell signals
-        sell_sigs = np.sum(list(bearish_sell_signals.values()))
-        buy_sigs = np.sum(list(bullish_buy_signals.values()))
-        if sell_sigs > 0:
-            print(sell_sigs, 'sell signals for', ticker)
-        if buy_sigs > 0:
-            print(buy_sigs, 'buy signals for', ticker)
+        # sell_sigs = np.sum(list(bearish_sell_signals.values()))
+        # buy_sigs = np.sum(list(bullish_buy_signals.values()))
+        # if sell_sigs > 0:
+        #     print(sell_sigs, 'sell signals for', ticker)
+        # if buy_sigs > 0:
+        #     print(buy_sigs, 'buy signals for', ticker)
 
-        bearish_totals =  -np.mean(list(bear_sigs[ticker].values()))
-        bullish_totals =  np.mean(list(bull_sigs[ticker].values()))
+        # bearish_totals =  -np.mean(list(bear_sigs[ticker].values()))
+        # bullish_totals =  np.mean(list(bull_sigs[ticker].values()))
+        #
+        # overall = np.mean([bearish_totals, bullish_totals])
+        # overall_bear_bull[ticker] = overall
 
-        overall = np.mean([bearish_totals, bullish_totals])
-        overall_bear_bull[ticker] = overall
+        bear_bull_sigs_df = pd.concat([bear_bull_sigs_df, temp_df])
 
+    bear_bull_sigs_df['overall_bear_bull'] = bear_bull_sigs_df[bull_sigs_cols].mean() - bear_bull_sigs_df[bear_sigs_cols].mean()
+    buy_sigs_cols = ['days_since_ppo_buy', 'days_since_trix_buy', 'days_since_short_rsi_buy', 'days_since_mid_rsi_buy']
+    sell_sigs_cols = [b.replace('buy', 'sell') for b in buy_sigs_cols]
+    bear_bull_sigs_df['avg_days_since_buy_sigs'] = bear_bull_sigs_df[buy_sigs_cols].mean()
+    bear_bull_sigs_df['avg_days_since_sell_sigs'] = bear_bull_sigs_df[sell_sigs_cols].mean()
 
     # get bulls with over 0.25 scores overall (at least half of bullish signals triggering)
 
     # TODO: find most recent buy signals
 
     # for now, just get stocks with buy signals today
-    has_buy_sigs = {}
-    for t in bull_buy_sigs.keys():
-        buy_sigs = sum(bull_buy_sigs[t].values())
-        if buy_sigs > 0:
-            has_buy_sigs[t] = bull_buy_sigs[t]
+    # has_buy_sigs = {}
+    # for t in bull_buy_sigs.keys():
+    #     buy_sigs = sum(bull_buy_sigs[t].values())
+    #     if buy_sigs > 0:
+    #         has_buy_sigs[t] = bull_buy_sigs[t]
 
 
     # order by top bull signals
     # sorts from least to greatest
-    sorted_overall_bear_bull = sorted(overall_bear_bull.items(), key=operator.itemgetter(1))
-    pprint(sorted_overall_bear_bull[-100:])
-    best_bulls = [s for s in sorted_overall_bear_bull if s[1] == 0.5]
+    # sorted_overall_bear_bull = sorted(overall_bear_bull.items(), key=operator.itemgetter(1))
+    # pprint(sorted_overall_bear_bull[-100:])
+    # best_bulls = [s for s in sorted_overall_bear_bull if s[1] == 0.5]
 
 
     # now get most recent buy/sell signals
-    days_since_buy_signals = {}
-    days_since_sell_signals = {}
-    avg_days_since_buy_sigs = {}
-    avg_days_since_sell_sigs = {}
-    rsi_short_term_buy_signals = {}
-    rsi_mid_term_buy_signals = {}
-    for t in ta_dfs.keys():
-        days_since_buy_signals[t] = {}
-        days_since_sell_signals[t] = {}
-        days_since_buy_signals[t]['ppo'] = (ta_dfs[t].index.max() - ta_dfs[t][ta_dfs[t]['ppo_buy_signal'] == 1].index.max()).days
-        days_since_buy_signals[t]['trix'] = (ta_dfs[t].index.max() - ta_dfs[t][ta_dfs[t]['trix_buy_signal'] == 1].index.max()).days
-        rsi_short_days = (ta_dfs[t].index.max() - ta_dfs[t][ta_dfs[t]['rsi_5_buy_signal'] == 1].index.max()).days
-        rsi_mid_days = (ta_dfs[t].index.max() - ta_dfs[t][ta_dfs[t]['rsi_14_buy_signal'] == 1].index.max()).days
-        days_since_buy_signals[t]['rsi_short'] = rsi_short_days
-        days_since_buy_signals[t]['rsi_mid'] = rsi_mid_days
-        rsi_short_term_buy_signals[t] = rsi_short_days
-        rsi_mid_term_buy_signals[t] = rsi_mid_days
-        days_since_sell_signals[t]['ppo'] = (ta_dfs[t].index.max() - ta_dfs[t][ta_dfs[t]['ppo_sell_signal'] == 1].index.max()).days
-        days_since_sell_signals[t]['trix'] = (ta_dfs[t].index.max() - ta_dfs[t][ta_dfs[t]['trix_sell_signal'] == 1].index.max()).days
-        days_since_sell_signals[t]['rsi_short'] = (ta_dfs[t].index.max() - ta_dfs[t][ta_dfs[t]['rsi_5_sell_signal'] == 1].index.max()).days
-        days_since_sell_signals[t]['rsi_mid'] = (ta_dfs[t].index.max() - ta_dfs[t][ta_dfs[t]['rsi_14_sell_signal'] == 1].index.max()).days
-
-        avg_days_since_buy_sigs[t] = np.mean([v for v in days_since_buy_signals[t].values()])
-        avg_days_since_sell_sigs[t] = np.mean([v for v in days_since_sell_signals[t].values()])
+    # should be replaced by DF ops above
+    # days_since_buy_signals = {}
+    # days_since_sell_signals = {}
+    # avg_days_since_buy_sigs = {}
+    # avg_days_since_sell_sigs = {}
+    # rsi_short_term_buy_signals = {}
+    # rsi_mid_term_buy_signals = {}
+    # for t in ta_dfs.keys():
+    #     days_since_buy_signals[t] = {}
+    #     days_since_sell_signals[t] = {}
+    #     days_since_buy_signals[t]['ppo'] = (ta_dfs[t].index.max() - ta_dfs[t][ta_dfs[t]['ppo_buy_signal'] == 1].index.max()).days
+    #     days_since_buy_signals[t]['trix'] = (ta_dfs[t].index.max() - ta_dfs[t][ta_dfs[t]['trix_buy_signal'] == 1].index.max()).days
+    #     rsi_short_days = (ta_dfs[t].index.max() - ta_dfs[t][ta_dfs[t]['rsi_5_buy_signal'] == 1].index.max()).days
+    #     rsi_mid_days = (ta_dfs[t].index.max() - ta_dfs[t][ta_dfs[t]['rsi_14_buy_signal'] == 1].index.max()).days
+    #     days_since_buy_signals[t]['rsi_short'] = rsi_short_days
+    #     days_since_buy_signals[t]['rsi_mid'] = rsi_mid_days
+    #     rsi_short_term_buy_signals[t] = rsi_short_days
+    #     rsi_mid_term_buy_signals[t] = rsi_mid_days
+    #     days_since_sell_signals[t]['ppo'] = (ta_dfs[t].index.max() - ta_dfs[t][ta_dfs[t]['ppo_sell_signal'] == 1].index.max()).days
+    #     days_since_sell_signals[t]['trix'] = (ta_dfs[t].index.max() - ta_dfs[t][ta_dfs[t]['trix_sell_signal'] == 1].index.max()).days
+    #     days_since_sell_signals[t]['rsi_short'] = (ta_dfs[t].index.max() - ta_dfs[t][ta_dfs[t]['rsi_5_sell_signal'] == 1].index.max()).days
+    #     days_since_sell_signals[t]['rsi_mid'] = (ta_dfs[t].index.max() - ta_dfs[t][ta_dfs[t]['rsi_14_sell_signal'] == 1].index.max()).days
+    #
+    #     avg_days_since_buy_sigs[t] = np.mean([v for v in days_since_buy_signals[t].values()])
+    #     avg_days_since_sell_sigs[t] = np.mean([v for v in days_since_sell_signals[t].values()])
 
     # sorted from shorted times to longest
-    sorted_avg_buy_days = sorted(avg_days_since_buy_sigs.items(), key=operator.itemgetter(1))
-    sorted_avg_sell_days = sorted(avg_days_since_sell_sigs.items(), key=operator.itemgetter(1))
+    # sorted_avg_buy_days = sorted(avg_days_since_buy_sigs.items(), key=operator.itemgetter(1))
+    # sorted_avg_sell_days = sorted(avg_days_since_sell_sigs.items(), key=operator.itemgetter(1))
 
     # days since rsi buy signals
-    sorted_rsi_short_buy_days = sorted(rsi_short_term_buy_signals.items(), key=operator.itemgetter(1))
-    sorted_rsi_mid_buy_days = sorted(rsi_mid_term_buy_signals.items(), key=operator.itemgetter(1))
+    # sorted_rsi_short_buy_days = sorted(rsi_short_term_buy_signals.items(), key=operator.itemgetter(1))
+    # sorted_rsi_mid_buy_days = sorted(rsi_mid_term_buy_signals.items(), key=operator.itemgetter(1))
 
-    mid_buy_1_day_ago = [s[0] for s in sorted_rsi_mid_buy_days if s[1] <= 1]
-    mid_buy_bear_bull = [overall_bear_bull[s] for s in mid_buy_1_day_ago]
-    sorted_idx = np.argsort(mid_buy_bear_bull)[::-1]
-    np.array(list(zip(mid_buy_1_day_ago, mid_buy_bear_bull)))[sorted_idx]
+    # mid_buy_1_day_ago = [s[0] for s in sorted_rsi_mid_buy_days if s[1] <= 1]
+    # mid_buy_bear_bull = [overall_bear_bull[s] for s in mid_buy_1_day_ago]
+    # sorted_idx = np.argsort(mid_buy_bear_bull)[::-1]
+    # np.array(list(zip(mid_buy_1_day_ago, mid_buy_bear_bull)))[sorted_idx]
 
 
     # want to find stocks with upward momentum and a RSI buy signal
@@ -647,18 +685,18 @@ def scan_all_quandl_stocks():
 
 
     # add overall bear_bull to mix, and bear/bull individually
-    for i, s in enumerate(sorted_avg_buy_days):
-        sorted_avg_buy_days[i] = s + (overall_bear_bull[s[0]],)
+    # for i, s in enumerate(sorted_avg_buy_days):
+    #     sorted_avg_buy_days[i] = s + (overall_bear_bull[s[0]],)
 
-    for i, s in enumerate(sorted_avg_sell_days):
-        sorted_avg_sell_days[i] = s + (overall_bear_bull[s[0]],)
+    # for i, s in enumerate(sorted_avg_sell_days):
+    #     sorted_avg_sell_days[i] = s + (overall_bear_bull[s[0]],)
+    #
+    # top_sorted_avg_buy_days = [s for s in sorted_avg_buy_days if s[2] >= 0.25]
 
-    top_sorted_avg_buy_days = [s for s in sorted_avg_buy_days if s[2] >= 0.25]
 
-
-    for b, v in overall_bear_bull.items():
-        if v >= 0.25:
-            print(b, v)
+    # for b, v in overall_bear_bull.items():
+    #     if v >= 0.25:
+    #         print(b, v)
 
     current_portfolio = ['BJ',
                         'CRON',
