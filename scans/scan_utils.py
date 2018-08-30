@@ -604,13 +604,19 @@ def scan_all_quandl_stocks():
     days_since_sell_signals = {}
     avg_days_since_buy_sigs = {}
     avg_days_since_sell_sigs = {}
+    rsi_short_term_buy_signals = {}
+    rsi_mid_term_buy_signals = {}
     for t in ta_dfs.keys():
         days_since_buy_signals[t] = {}
         days_since_sell_signals[t] = {}
         days_since_buy_signals[t]['ppo'] = (ta_dfs[t].index.max() - ta_dfs[t][ta_dfs[t]['ppo_buy_signal'] == 1].index.max()).days
         days_since_buy_signals[t]['trix'] = (ta_dfs[t].index.max() - ta_dfs[t][ta_dfs[t]['trix_buy_signal'] == 1].index.max()).days
-        days_since_buy_signals[t]['rsi_short'] = (ta_dfs[t].index.max() - ta_dfs[t][ta_dfs[t]['rsi_5_buy_signal'] == 1].index.max()).days
-        days_since_buy_signals[t]['rsi_mid'] = (ta_dfs[t].index.max() - ta_dfs[t][ta_dfs[t]['rsi_14_buy_signal'] == 1].index.max()).days
+        rsi_short_days = (ta_dfs[t].index.max() - ta_dfs[t][ta_dfs[t]['rsi_5_buy_signal'] == 1].index.max()).days
+        rsi_mid_days = (ta_dfs[t].index.max() - ta_dfs[t][ta_dfs[t]['rsi_14_buy_signal'] == 1].index.max()).days
+        days_since_buy_signals[t]['rsi_short'] = rsi_short_days
+        days_since_buy_signals[t]['rsi_mid'] = rsi_mid_days
+        rsi_short_term_buy_signals[t] = rsi_short_days
+        rsi_mid_term_buy_signals[t] = rsi_mid_days
         days_since_sell_signals[t]['ppo'] = (ta_dfs[t].index.max() - ta_dfs[t][ta_dfs[t]['ppo_sell_signal'] == 1].index.max()).days
         days_since_sell_signals[t]['trix'] = (ta_dfs[t].index.max() - ta_dfs[t][ta_dfs[t]['trix_sell_signal'] == 1].index.max()).days
         days_since_sell_signals[t]['rsi_short'] = (ta_dfs[t].index.max() - ta_dfs[t][ta_dfs[t]['rsi_5_sell_signal'] == 1].index.max()).days
@@ -622,6 +628,11 @@ def scan_all_quandl_stocks():
     # sorted from shorted times to longest
     sorted_avg_buy_days = sorted(avg_days_since_buy_sigs.items(), key=operator.itemgetter(1))
     sorted_avg_sell_days = sorted(avg_days_since_sell_sigs.items(), key=operator.itemgetter(1))
+
+    # days since rsi buy signals
+    sorted_rsi_short_buy_days = sorted(rsi_short_term_buy_signals.items(), key=operator.itemgetter(1))
+    sorted_rsi_mid_buy_days = sorted(rsi_mid_term_buy_signals.items(), key=operator.itemgetter(1))
+
     # add overall bear_bull to mix, and bear/bull individually
     for i, s in enumerate(sorted_avg_buy_days):
         sorted_avg_buy_days[i] = s + (overall_bear_bull[s[0]],)
