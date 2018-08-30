@@ -1546,7 +1546,7 @@ def get_stock_watchlist(update=True, return_trending=False):
     #             'PYPL', 'ADBE', 'FB', 'BOX', 'Z', 'TGT', 'FMC', 'KIRK', 'FTD',
     #             'ABEV', 'GE', 'F', 'TTT', 'DDD', 'VSAT', 'TKC', 'NWSA']
 
-    filename = '/home/nate/github/=stocks_emotional_analysis/StockTwits/tickers_watching.pk'
+    filename = '/home/nate/github/stocks_emotional_analysis/stocktwits/tickers_watching.pk'
     cur_tickers = []
     if os.path.exists(filename):
         cur_tickers = pk.load(open(filename, 'rb'))
