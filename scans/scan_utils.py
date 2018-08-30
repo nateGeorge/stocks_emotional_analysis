@@ -639,6 +639,11 @@ def scan_all_quandl_stocks():
     np.array(list(zip(mid_buy_1_day_ago, mid_buy_bear_bull)))[sorted_idx]
 
 
+    # want to find stocks with upward momentum and a RSI buy signal
+    # so the entries in bullish_signals, 'short-term ADX strong trend' and 'mid-term ADX' should be 1
+    # also having a short squeeze possibility would be good
+
+
 
 
     # add overall bear_bull to mix, and bear/bull individually
@@ -705,6 +710,10 @@ def get_price_changes(ta_dfs, col='ppo'):
             buys = buy_prices
             sells = sell_prices.iloc[1:] #  should also be able to do [-buy_prices.shape[0]:]
 
+        if buys.shape[0] > sells.shape[0]:
+            # have a new buy without a matching sell
+            buys = buy_prices.iloc[:-1]
+
         # combine buys and sells to match them
         # need to use values of sells so it doesn't try to index by date
         buys_sells = pd.DataFrame({'buy_price': buys, 'sell_price': sells.values})
@@ -728,13 +737,16 @@ def get_price_changes(ta_dfs, col='ppo'):
             buys = buy_prices.iloc[1:]  # sell_prices.shape[0]
             sells = sell_prices
 
+        if sells.shape[0] > buys.shape[0]:
+            # have a new buy without a matching sell
+            sells = sell_prices.iloc[:-1]
+
         # combine buys and sells to match them
         # need to use values of buys so it doesn't try to index by date
         sells_buys = pd.DataFrame({'ticker': t, 'sell_price': sells, 'buy_price': buys.values})
         sells_buys['price_change'] = sells_buys['sell_price'] - sells_buys['buy_price']
         sells_buys['price_pct_change'] = sells_buys['price_change'] / sells_buys['sell_price']
 
-        # sells_buys['price_pct_change'].hist(bins=100); plt.show()
 
         time_diffs_sell_buy = (buys.index - sells.index).days
         sells_buys.loc[:, 'time_diffs'] = time_diffs_sell_buy
@@ -742,7 +754,9 @@ def get_price_changes(ta_dfs, col='ppo'):
 
         # plt.hist(time_diffs_sell_buy, bins=30); plt.show()
         # # longer time period, higher gain
-        # plt.scatter(time_diffs_sell_buy, sells_buys['price_pct_change']); plt.show()
+
+    sells_buys['price_pct_change'].hist(bins=100); plt.show()
+    plt.scatter(time_diffs_sell_buy, sells_buys['price_pct_change']); plt.show()
 
 
 # TODO: look at buy sell differences when market is bullish and sell-buy when market bearish

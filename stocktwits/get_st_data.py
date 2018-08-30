@@ -99,7 +99,8 @@ def scrape_historical_data(ticker='AAPL', verbose=True, only_update_latest=False
     only_update_latest=True will fill in any data from present back to latest existing data
     """
     #TODO: deal with misssing data in the middle somehow...
-    filepath = get_home_dir() + 'stocktwits/data/' + ticker + '/'
+    # filepath = get_home_dir() + 'stocktwits/data/' + ticker + '/'
+    filepath = '/home/nate/Dropbox/data/stocktwits/data/' + ticker + '/'
     if not os.path.exists(filepath): make_dirs(filepath)
     filename = filepath + ticker + '_all_messages.pk'
     new_filename = filepath + ticker + '_new_messages.pk'  # for new data when updating
@@ -229,7 +230,8 @@ def get_sentiments_vader_dask(df, analyzer):
 def load_historical_data(ticker='AAPL', must_be_up_to_date=False):
     # TODO: try new method from swifter
 
-    filepath = get_home_dir() + 'stocktwits/data/' + ticker + '/'
+    # filepath = get_home_dir() + 'stocktwits/data/' + ticker + '/'
+    filepath = '/home/nate/Dropbox/data/stocktwits/data/' + ticker + '/'
     filename = filepath + ticker + '_all_messages.pk'
     if os.path.exists(filename):
         with open(filename, 'rb') as f:
