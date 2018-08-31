@@ -30,9 +30,9 @@ sys.path.append('../../scrape_ib')
 import scrape_ib
 
 
-def make_dirs(path):
+def make_dirs_from_home_dir(path):
     """
-    makes directory, one folder at a time
+    makes directory, one folder at a time, starting at github repo home dir
     """
     last_dir = get_home_dir()
     new_path = path
@@ -40,6 +40,17 @@ def make_dirs(path):
         new_path = path.replace(last_dir, '')
 
     for d in new_path.split('/'):
+        last_dir = os.path.join(last_dir, d)
+        if not os.path.exists(last_dir):
+            os.mkdir(last_dir)
+
+
+def make_dirs(path):
+    """
+    makes directory, one folder at a time
+    """
+    last_dir = '/'
+    for d in path.split('/'):
         last_dir = os.path.join(last_dir, d)
         if not os.path.exists(last_dir):
             os.mkdir(last_dir)
@@ -131,20 +142,24 @@ def scrape_historical_data(ticker='AAPL', verbose=True, only_update_latest=False
     # returns a dictionary with keys ['cursor', 'response', 'messages', 'symbol']
     # docs say returns less than or equal to max, but seems to be only less than
     # get first request
-    st, req_left, reset_time = api.get_stock_stream(ticker, {'max': earliest})
-    if st is None:
-        print('returned None for some reason')
-    elif st is False:
-        print('tried all access tokens, none have enough calls left')
-        return
+    st = None
+    while st in [None, False]:
+        st, req_left, reset_time = api.get_stock_stream(ticker, {'max': earliest})
+        if st is None:
+            print('returned None for some reason, sleeping 1 min and trying again')
+            time.sleep(60)
+        elif st is False:
+            print('tried all access tokens, none have enough calls left')
+            print('sleeping 5 minutes')
+            time.sleep(60*5)
+
+    if only_update_latest:
+        new_messages.extend(st['messages'])
+        # see if we got all the new data yet
+        if check_new_data(latest, st, all_messages, new_messages, filename, new_filename):
+            return
     else:
-        if only_update_latest:
-            new_messages.extend(st['messages'])
-            # see if we got all the new data yet
-            if check_new_data(latest, st, all_messages, new_messages, filename, new_filename):
-                return
-        else:
-            all_messages.extend(st['messages'])
+        all_messages.extend(st['messages'])
 
     num_calls = 1
 
@@ -1557,7 +1572,8 @@ def get_stock_watchlist(update=True, return_trending=False):
         trending = None
         while trending is None:
             trending = api.get_trending_stocks()
-            time.sleep(10)
+            print('sleeping 30s')
+            time.sleep(30)
 
         # only unique tickers
         tickers = sorted(list(set(cur_tickers + trending)))
