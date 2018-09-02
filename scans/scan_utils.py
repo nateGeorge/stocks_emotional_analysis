@@ -5,6 +5,7 @@ from collections import OrderedDict
 import numpy as np
 import pandas as pd
 from pprint import pprint
+from tqdm import tqdm
 
 import matplotlib.pyplot as plt
 
@@ -380,6 +381,9 @@ def get_market_status_quandl(dfs):
 
 
 def scan_watchlist():
+    sys.path.append('../stocktwits/')
+    import get_st_data as gt
+
     bear_bull_scores = {}
     ta_dfs = {}
     bear_sigs = {}
@@ -390,10 +394,10 @@ def scan_watchlist():
 
     market_is = get_market_status_ib()
     watchlist = get_stock_watchlist(update=False)
-    for ticker in watchlist:
-        print(ticker)
+    for ticker in tqdm(watchlist):
+        # print(ticker)
         try:
-            trades_1day = load_ib_data(ticker)
+            trades_1day = gt.load_ib_data(ticker)
         except FileNotFoundError:
             print('no trade data for', ticker)
             continue
@@ -484,8 +488,8 @@ def scan_all_quandl_stocks():
 
     # get market status, although this is not necessary
     market_is = get_market_status_quandl(dfs)
-    for t in sorted(dfs.keys()):
-        print(t)
+    for t in tqdm(sorted(dfs.keys())):
+        # print(t)
         trades_1day = dfs[t]
 
         # TODO: adapt so can handle smaller number of points
@@ -527,6 +531,10 @@ def scan_all_quandl_stocks():
     bear_bull_sigs_df['avg_days_since_buy_sigs'] = bear_bull_sigs_df[buy_sigs_cols].mean(axis=1)
     bear_bull_sigs_df['avg_days_since_sell_sigs'] = bear_bull_sigs_df[sell_sigs_cols].mean(axis=1)
 
+    return ta_dfs, bear_bull_sigs_df
+
+
+def screen_stocks(bear_bull_sigs_df):
     # get bulls with over 0.25 scores overall (at least half of bullish signals triggering)
 
     # TODO: find most recent buy signals
@@ -538,14 +546,17 @@ def scan_all_quandl_stocks():
     most_recent_mid_rsi_buys = bear_bull_sigs_df.sort_values(by=['days_since_mid_rsi_buy', 'overall_bear_bull', 'adx_14'], ascending=[True, False, False])
     most_recent_mid_rsi_buys[['days_since_mid_rsi_buy', 'overall_bear_bull', 'adx_14']].head(50)
 
+    # columns to show when checking out head of sorted dfs
+    head_cols = ['avg_days_since_buy_sigs', 'overall_bear_bull', 'adx_14']
+
 
     # order by top bull signals
-    # sorts from least to greatest
-    # sorted_overall_bear_bull = sorted(overall_bear_bull.items(), key=operator.itemgetter(1))
-    # pprint(sorted_overall_bear_bull[-100:])
-    # best_bulls = [s for s in sorted_overall_bear_bull if s[1] == 0.5]
+    top_bull = bear_bull_sigs_df.sort_values(by='overall_bear_bull', ascending=False)
+    top_bull[head_cols].head(50)
 
     # sorted from shorted times to longest
+    nearest_buys = bear_bull_sigs_df.sort_values(by='avg_days_since_buy_sigs')
+    nearest_buys[head_cols].head(50)
     # sorted_avg_buy_days = sorted(avg_days_since_buy_sigs.items(), key=operator.itemgetter(1))
     # sorted_avg_sell_days = sorted(avg_days_since_sell_sigs.items(), key=operator.itemgetter(1))
 
@@ -580,20 +591,23 @@ def scan_all_quandl_stocks():
     #     if v >= 0.25:
     #         print(b, v)
 
-    current_portfolio = ['BJ',
-                        'CRON',
-                        'NEPT',
-                        'TLRY',
-                        'CGC',
-                        'CRON',
-                        'BILI',
-                        'MOMO',
-                        'SQ',
-                        'DDD',
-                        'TTD',
-                        'AOBC',
-                        'LVVV',
-                        'OLED']  # not enough data yet for BJ and TLRY
+
+def check_current_portfolio(current_portfolio=None):
+    if current_portfolio is None:
+        current_portfolio = ['BJ',
+                            'CRON',
+                            'NEPT',
+                            'TLRY',
+                            'CGC',
+                            'CRON',
+                            'BILI',
+                            'MOMO',
+                            'SQ',
+                            'DDD',
+                            'TTD',
+                            'AOBC',
+                            'LVVV',
+                            'OLED']  # not enough data yet for BJ and TLRY
 
     for c in current_portfolio:
         print(c)
@@ -636,7 +650,7 @@ def get_price_changes(ta_dfs, col='ppo'):
 
         # combine buys and sells to match them
         # need to use values of sells so it doesn't try to index by date
-        buys_sells = pd.DataFrame({'buy_price': buys, 'sell_price': sells.values})
+        buys_sells = pd.DataFrame({'ticker': ticker, 'buy_price': buys, 'sell_price': sells.values})
         buys_sells.loc[:, 'price_change'] = buys_sells['sell_price'] - buys_sells['buy_price']
         buys_sells.loc[:, 'price_pct_change'] = buys_sells['price_change'] / buys_sells['buy_price']
 
@@ -663,7 +677,7 @@ def get_price_changes(ta_dfs, col='ppo'):
 
         # combine buys and sells to match them
         # need to use values of buys so it doesn't try to index by date
-        sells_buys = pd.DataFrame({'ticker': t, 'sell_price': sells, 'buy_price': buys.values})
+        sells_buys = pd.DataFrame({'ticker': ticker, 'sell_price': sells, 'buy_price': buys.values})
         sells_buys['price_change'] = sells_buys['sell_price'] - sells_buys['buy_price']
         sells_buys['price_pct_change'] = sells_buys['price_change'] / sells_buys['sell_price']
 
@@ -675,15 +689,63 @@ def get_price_changes(ta_dfs, col='ppo'):
         # plt.hist(time_diffs_sell_buy, bins=30); plt.show()
         # # longer time period, higher gain
 
-    full_sells_buys['price_pct_change'].hist(bins=100); plt.show()
-    full_buys_sells['price_pct_change'].hist(bins=100); plt.show()
-    plt.scatter(time_diffs_sell_buy, sells_buys['price_pct_change']); plt.show()
+    return full_sells_buys, full_buys_sells
+
+
+def plot_price_changes(full_sells_buys, full_buys_sells, col):
+    """
+    plots price changes from get_price_changes
+    """
+    # plot price pct changes -- always positive for RSI, but lots of little numbers
+    full_sells_buys['price_pct_change'].hist(bins=100)
+    plt.title(col + ' sells->buys price pct change')
+    plt.show()
+
+    full_buys_sells['price_pct_change'].hist(bins=100)
+    plt.title(col + ' buys->sells price pct change')
+    plt.show()
+
+    # for plotting, only look at price pct change %200 and belowe
+    full_buys_sells_limited_pct_change = full_buys_sells[full_buys_sells['price_pct_change'] <= 200]['price_pct_change']
+    full_buys_sells_limited_pct_change.hist(bins=100)
+    plt.title(col + ' buys->sells price pct change, <200%')
+    plt.show()
+
+
+    plt.scatter(sells_buys['time_diffs'], sells_buys['price_pct_change'])
+    plt.xlabel('time diffs (days)')
+    plt.ylabel('price pct change')
+    plt.title(col + 'sells->buys price pct change vs days')
+    plt.show()
+
+    plt.scatter(buys_sells['time_diffs'], buys_sells['price_pct_change'])
+    plt.xlabel('time diffs (days)')
+    plt.ylabel('price pct change')
+    plt.title(col + 'buys->sells price pct change vs days')
+    plt.show()
+
+
+# TODO: get stocks with best expected values from buys sell and sells buys DFs
+
+# ticker_groups  = full_buys_sells.groupby('ticker')
+#
+# ticker_groups  = full_sells_buys[['ticker', 'price_pct_change', 'time_diffs']].groupby('ticker').mean()
+#
+# for t, d in ticker_groups:
+
+
+
 
 
 # TODO: look at buy sell differences when market is bullish and sell-buy when market bearish
 
 
-def get_bullish_bearish_market_ranges():
+def get_bullish_bearish_market_ranges(dfs):
     """
     gets date ranges when market is bullish or bearish or neutral
+
+    takes dfs list from quandl data
     """
+    bear_bull_df_spy = get_bearish_bullish_full_df(dfs['SPY'])
+    bear_bull_df_qqq = get_bearish_bullish_full_df(dfs['QQQ'])
+    bear_bull_df_dia = get_bearish_bullish_full_df(dfs['DIA'])
