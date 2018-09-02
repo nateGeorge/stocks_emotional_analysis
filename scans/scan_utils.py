@@ -21,27 +21,32 @@ def get_TAs(trades_1d, source='ib'):
     sys.path.append('../../stock_prediction/code')
     sys.path.append('../stock_prediction/code')
     import calculate_ta_signals as cts
-    if source == 'ib':
-        trades_1d_ta = cts.create_tas(trades_1d.copy(), ohlcv_cols=['open', 'high', 'low', 'close', 'volume'], return_df=True, tp=False)
-    elif source == 'quandl':
-        trades_1d_ta = cts.create_tas(trades_1d.copy(), ohlcv_cols=['Adj_Open', 'Adj_High', 'Adj_Low', 'Adj_Close', 'Adj_Volume'], return_df=True, tp=False)
 
     keep_tas = ['atr_5',
-                'atr_14',
-                'natr_5',
-                'natr_14',
-                'obv_cl',
-                'obv_cl_ema_14',
-                'rsi_cl_5',
-                'rsi_cl_14',
-                'adx_14',
-                'adx_5',
-                'ppo_cl',
-                'ppo_cl_signal',
-                'trix_cl_12',
-                'trix_cl_12_signal',
-                'mdi',
-                'pldi']
+    'atr_14',
+    'atr_20',
+    'atr_65',
+    'natr_5',
+    'natr_14',
+    'obv_cl',
+    'obv_cl_ema_14',
+    'rsi_cl_5',
+    'rsi_cl_14',
+    'adx_14',
+    'adx_5',
+    'ppo_cl',
+    'ppo_cl_signal',
+    'trix_cl_12',
+    'trix_cl_12_signal',
+    'mdi',
+    'pldi']
+
+    if source == 'ib':
+        trades_1d_ta = cts.create_tas(trades_1d.copy(), ohlcv_cols=['open', 'high', 'low', 'close', 'volume'], return_df=True, tp=False)
+        keep_tas.extend('close')  # add close for calculating stop
+    elif source == 'quandl':
+        trades_1d_ta = cts.create_tas(trades_1d.copy(), ohlcv_cols=['Adj_Open', 'Adj_High', 'Adj_Low', 'Adj_Close', 'Adj_Volume'], return_df=True, tp=False)
+        keep_tas.extend('Adj_Close')  # add close for calculating stop
 
     trades_1d_tas = trades_1d_ta.loc[:, keep_tas]
 
@@ -626,7 +631,7 @@ def get_price_changes(ta_dfs, col='ppo'):
     full_sells_buys = pd.DataFrame()#{'ticker', 'buy_price', 'sell_price', 'price_change', 'price_pct_change', 'time_diffs'})
     full_buys_sells = pd.DataFrame()#{'ticker', 'sell_price', 'buy_price', 'price_change', 'price_pct_change', 'time_diffs'})
 
-    for ticker in ta_dfs.keys():
+    for ticker in tqdm(ta_dfs.keys()):
         df = ta_dfs[ticker]
         buy_idxs = df[df[col + '_buy_signal'] == 1].index
         sell_idxs = df[df[col + '_sell_signal'] == 1].index
@@ -727,7 +732,30 @@ def plot_price_changes(full_sells_buys, full_buys_sells, col):
 
 # TODO: get stocks with best expected values from buys sell and sells buys DFs
 
-# ticker_groups  = full_buys_sells.groupby('ticker')
+ta_dfs, bear_bull_sigs_df = scan_all_quandl_stocks()
+
+full_sells_buys_rsi_14, full_buys_sells_rsi_14 = get_price_changes(ta_dfs, col='rsi_14')
+
+buy_ticker_groups  = full_buys_sells_rsi_14[['ticker', 'price_pct_change', 'time_diffs']].groupby('ticker').mean().sort_values(by='price_pct_change', ascending=False)
+full_df_buy = buy_ticker_groups.merge(bear_bull_sigs_df, left_index=True, right_index=True)
+full_df_buy[full_df_buy['days_since_mid_rsi_buy'] < 4][['price_pct_change', 'time_diffs', 'days_since_mid_rsi_buy', 'overall_bear_bull']].head(50)
+
+
+bear_bull_sigs_df.loc['EGC']
+
+def get_trailing_stop_pct(df):
+    """
+    uses general rules from "Honest guide to stock trading"
+    trailing stop at 4x latest ATR (13-week ATR) for weekly breakout strategy
+    7x for daily breakout (20 day)
+    2.5x for countertrend (20 day)
+
+    df should be a ta_dfs which has 20day and 65day ATRs
+    """
+    latest_price = df.iloc[-1]
+
+
+
 #
 # ticker_groups  = full_sells_buys[['ticker', 'price_pct_change', 'time_diffs']].groupby('ticker').mean()
 #
