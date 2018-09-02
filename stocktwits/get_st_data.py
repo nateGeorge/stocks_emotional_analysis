@@ -1621,6 +1621,8 @@ def update_lots_of_tickers():
     tickers = get_stock_watchlist()
     while True:
         for t in tickers:
+            # update tickers to get watch list constantly
+            _ = get_stock_watchlist()
             try:
                 print('scraping', t)
                 scrape_historical_data(t)
