@@ -46,7 +46,7 @@ def get_TAs(trades_1d, source='ib'):
         keep_tas.extend('close')  # add close for calculating stop
     elif source == 'quandl':
         trades_1d_ta = cts.create_tas(trades_1d.copy(), ohlcv_cols=['Adj_Open', 'Adj_High', 'Adj_Low', 'Adj_Close', 'Adj_Volume'], return_df=True, tp=False)
-        keep_tas.extend('Adj_Close')  # add close for calculating stop
+        keep_tas.extend(['Adj_Close'])  # add close for calculating stop
 
     trades_1d_tas = trades_1d_ta.loc[:, keep_tas]
 
@@ -527,7 +527,7 @@ def scan_all_quandl_stocks():
         temp_df['days_since_short_rsi_sell'] = (ta_dfs[t].index.max() - ta_dfs[t][ta_dfs[t]['rsi_5_sell_signal'] == 1].index.max()).days
         temp_df['days_since_mid_rsi_sell'] = (ta_dfs[t].index.max() - ta_dfs[t][ta_dfs[t]['rsi_14_sell_signal'] == 1].index.max()).days
 
-        bear_bull_sigs_df = pd.concat([bear_bull_sigs_df, temp_df])
+        bear_bull_sigs_df = pd.concat([bear_bull_sigs_df, temp_df], sort=True)
 
     # calculate some averages
     bear_bull_sigs_df['overall_bear_bull'] = bear_bull_sigs_df[list(bullish_signals.keys())].mean(axis=1) - bear_bull_sigs_df[list(bearish_signals.keys())].mean(axis=1)
@@ -635,8 +635,8 @@ def get_price_changes(ta_dfs, col='ppo'):
         df = ta_dfs[ticker]
         buy_idxs = df[df[col + '_buy_signal'] == 1].index
         sell_idxs = df[df[col + '_sell_signal'] == 1].index
-        buy_prices = dfs[ticker].loc[buy_idxs]['Adj_Close']
-        sell_prices = dfs[ticker].loc[sell_idxs]['Adj_Close']
+        buy_prices = df.loc[buy_idxs]['Adj_Close']
+        sell_prices = df.loc[sell_idxs]['Adj_Close']
 
         # get buy-sell df and price changes
         if buy_idxs.min() < sell_idxs.min():
@@ -732,17 +732,6 @@ def plot_price_changes(full_sells_buys, full_buys_sells, col):
 
 # TODO: get stocks with best expected values from buys sell and sells buys DFs
 
-ta_dfs, bear_bull_sigs_df = scan_all_quandl_stocks()
-
-full_sells_buys_rsi_14, full_buys_sells_rsi_14 = get_price_changes(ta_dfs, col='rsi_14')
-
-buy_ticker_groups  = full_buys_sells_rsi_14[['ticker', 'price_pct_change', 'time_diffs']].groupby('ticker').mean().sort_values(by='price_pct_change', ascending=False)
-full_df_buy = buy_ticker_groups.merge(bear_bull_sigs_df, left_index=True, right_index=True)
-full_df_buy[full_df_buy['days_since_mid_rsi_buy'] < 4][['price_pct_change', 'time_diffs', 'days_since_mid_rsi_buy', 'overall_bear_bull']].head(50)
-
-
-bear_bull_sigs_df.loc['EGC']
-
 def get_trailing_stop_pct(df):
     """
     uses general rules from "Honest guide to stock trading"
@@ -777,3 +766,18 @@ def get_bullish_bearish_market_ranges(dfs):
     bear_bull_df_spy = get_bearish_bullish_full_df(dfs['SPY'])
     bear_bull_df_qqq = get_bearish_bullish_full_df(dfs['QQQ'])
     bear_bull_df_dia = get_bearish_bullish_full_df(dfs['DIA'])
+
+
+if __name__ == "__main__":
+    print('getting ta dfs and bear bull sigs df...')
+    ta_dfs, bear_bull_sigs_df = scan_all_quandl_stocks()
+
+    print('getting rsi_14 buys sells')
+    full_sells_buys_rsi_14, full_buys_sells_rsi_14 = get_price_changes(ta_dfs, col='rsi_14')
+
+    buy_ticker_groups  = full_buys_sells_rsi_14[['ticker', 'price_pct_change', 'time_diffs']].groupby('ticker').mean().sort_values(by='price_pct_change', ascending=False)
+    full_df_buy = buy_ticker_groups.merge(bear_bull_sigs_df, left_index=True, right_index=True)
+    full_df_buy[full_df_buy['days_since_mid_rsi_buy'] < 4][['price_pct_change', 'time_diffs', 'days_since_mid_rsi_buy', 'overall_bear_bull']].head(50)
+
+
+    # bear_bull_sigs_df.loc['EGC']
