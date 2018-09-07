@@ -767,8 +767,17 @@ def get_bullish_bearish_market_ranges(dfs):
     bear_bull_df_qqq = get_bearish_bullish_full_df(dfs['QQQ'])
     bear_bull_df_dia = get_bearish_bullish_full_df(dfs['DIA'])
 
-
 if __name__ == "__main__":
+    pass
+    # ta_dfs, bear_bull_sigs_df = scan_all_quandl_stocks()
+    #
+    # full_sells_buys_rsi_14, full_buys_sells_rsi_14 = get_price_changes(ta_dfs, col='rsi_14')
+    #
+    # buy_ticker_groups  = full_buys_sells_rsi_14[['ticker', 'price_pct_change', 'time_diffs']].groupby('ticker').mean().sort_values(by='price_pct_change', ascending=False)
+    # full_df_buy = buy_ticker_groups.merge(bear_bull_sigs_df, left_index=True, right_index=True)
+    # full_df_buy[full_df_buy['days_since_mid_rsi_buy'] < 4][['price_pct_change', 'time_diffs', 'days_since_mid_rsi_buy', 'overall_bear_bull']].head(50)
+    #
+    #
     print('getting ta dfs and bear bull sigs df...')
     ta_dfs, bear_bull_sigs_df = scan_all_quandl_stocks()
 
