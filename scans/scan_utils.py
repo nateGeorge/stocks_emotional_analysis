@@ -43,10 +43,10 @@ def get_TAs(trades_1d, source='ib'):
 
     if source == 'ib':
         trades_1d_ta = cts.create_tas(trades_1d.copy(), ohlcv_cols=['open', 'high', 'low', 'close', 'volume'], return_df=True, tp=False)
-        keep_tas.extend('close')  # add close for calculating stop
+        keep_tas.append('close')  # add close for calculating stop
     elif source == 'quandl':
         trades_1d_ta = cts.create_tas(trades_1d.copy(), ohlcv_cols=['Adj_Open', 'Adj_High', 'Adj_Low', 'Adj_Close', 'Adj_Volume'], return_df=True, tp=False)
-        keep_tas.extend('Adj_Close')  # add close for calculating stop
+        keep_tas.append('Adj_Close')  # add close for calculating stop
 
     trades_1d_tas = trades_1d_ta.loc[:, keep_tas]
 
@@ -297,49 +297,51 @@ def get_bearish_bullish_full_df(df):
 
     for idx, latest_point in df.iterrows():
         # obv rising or falling
-        if latest_point['obv_cl_ema_14_diff_ema9'][0] > trades_1d_tas['obv_cl_ema_14_diff_ema9'].std() * 0.5:
+        # for 3min, should be latest_point['obv_cl_ema_14_diff_ema9']
+        # for daily, I think it was latest_point['obv_cl_ema_14_diff_ema9'][0]
+        if latest_point['obv_cl_ema_14_diff_ema9'] > df['obv_cl_ema_14_diff_ema9'].std() * 0.5:
             df.loc[idx, 'OBV_bear_bull'] = 1
-        elif latest_point['obv_cl_ema_14_diff_ema9'][0] < trades_1d_tas['obv_cl_ema_14_diff_ema9'].std() * 0.5:
+        elif latest_point['obv_cl_ema_14_diff_ema9'] < df['obv_cl_ema_14_diff_ema9'].std() * 0.5:
             df.loc[idx, 'OBV_bear_bull'] = -1
 
         # RSI
-        if latest_point['rsi_cl_5'][0] > 50:
+        if latest_point['rsi_cl_5'] > 50:
             df.loc[idx, 'shortterm_RSI_bear_bull'] = 1
         else:
             df.loc[idx, 'shortterm_RSI_bear_bull'] = -1
-        if latest_point['rsi_cl_14'][0] > 50:
+        if latest_point['rsi_cl_14'] > 50:
             df.loc[idx, 'midterm_RSI_bear_bull'] = 1
         else:
 
             df.loc[idx, 'midterm_RSI_bear_bull'] = -1
 
         # ADX
-        if latest_point['pldi'][0] > latest_point['mdi'][0]:
+        if latest_point['pldi'] > latest_point['mdi'][0]:
             if latest_point['adx_14_diff_ema'][0] > 0:
                 df.loc[idx, 'midterm_ADX_bear_bull'] = 1
-            if latest_point['adx_14'][0] > 25:
+            if latest_point['adx_14'] > 25:
                 df.loc[idx, 'midterm_ADX_strong_trend_bear_bull'] = 1
-            if latest_point['adx_5'][0] > 25:
+            if latest_point['adx_5'] > 25:
                 df.loc[idx, 'short-term_ADX_strong_trend_bear_bull'] = 1
         else:
-            if latest_point['adx_14_diff_ema'][0] > 0:
+            if latest_point['adx_14_diff_ema'] > 0:
                 df.loc[idx, 'midterm_ADX_bear_bull'] = -1
-            if latest_point['adx_14'][0] > 25:
+            if latest_point['adx_14'] > 25:
                 df.loc[idx, 'midterm_ADX_strong_trend_bear_bull'] = -1
-            if latest_point['adx_5'][0] > 25:
+            if latest_point['adx_5'] > 25:
                 df.loc[idx, 'shortterm_ADX_strong_trend_bear_bull'] = -1
 
 
         # PPO/TRIX
         # if ppo_cl is above signal line (ppo_cl_signal), then bullish sign, especially if both below 0
         # ppo_cl crossing signal line below zero is a buy signal, or bullish signal
-        if latest_point['ppo_diff'][0] > 0:
+        if latest_point['ppo_diff'] > 0:
             df.loc[idx, 'PPO_trend_bear_bull'] = 1
-        if latest_point['trix_diff'][0] > 0:
+        if latest_point['trix_diff'] > 0:
             df.loc[idx, 'TRIX_trend_bear_bull'] = 1
-        if latest_point['ppo_diff'][0] < 0:
+        if latest_point['ppo_diff'] < 0:
             df.loc[idx, 'PPO_trend_bear_bull'] = -1
-        if latest_point['trix_diff'][0] < 0:
+        if latest_point['trix_diff'] < 0:
             df.loc[idx, 'TRIX_trend_bear_bull'] = -1
 
     return df
@@ -620,12 +622,15 @@ def check_current_portfolio(current_portfolio=None):
             print(overall_bear_bull[c])
 
 
-def get_price_changes(ta_dfs, col='ppo'):
+def get_price_changes(ta_dfs, col='ppo', source='quandl', timeframe='1D'):
     """
     gets price changes and percent price changes from buy to sell and sell to buy
 
     col can be one of ppo, trix, rsi_5, rsi_14
     """
+    close_col = 'Adj_Close'
+    if source == 'ib':
+        close_col = 'close'
     # get average price changes between buy and sell signals
     # rsi_5 and rsi_14 are perfect for SPY...and seemingly everything else
     full_sells_buys = pd.DataFrame()#{'ticker', 'buy_price', 'sell_price', 'price_change', 'price_pct_change', 'time_diffs'})
@@ -635,8 +640,8 @@ def get_price_changes(ta_dfs, col='ppo'):
         df = ta_dfs[ticker]
         buy_idxs = df[df[col + '_buy_signal'] == 1].index
         sell_idxs = df[df[col + '_sell_signal'] == 1].index
-        buy_prices = dfs[ticker].loc[buy_idxs]['Adj_Close']
-        sell_prices = dfs[ticker].loc[sell_idxs]['Adj_Close']
+        buy_prices = df.loc[buy_idxs][close_col]
+        sell_prices = df.loc[sell_idxs][close_col]
 
         # get buy-sell df and price changes
         if buy_idxs.min() < sell_idxs.min():
@@ -661,8 +666,12 @@ def get_price_changes(ta_dfs, col='ppo'):
 
         # buys_sells['price_pct_change'].hist(bins=100); plt.show()
 
-        time_diffs_buy_sell = (sells.index - buys.index).days
-        buys_sells.loc[:, 'time_diffs'] = time_diffs_buy_sell
+        time_diffs_days_buy_sell = (sells.index - buys.index).days
+        buys_sells.loc[:, 'time_diffs_days'] = time_diffs_days_buy_sell
+        if timeframe == '3 mins':
+            time_diffs_mins_buy_sell = (sells.index - buys.index).total_seconds() / 60
+            buys_sells.loc[:, 'time_diffs_mins'] = time_diffs_mins_buy_sell
+
         full_buys_sells = pd.concat([full_buys_sells, buys_sells])
 
         # get sell-buy df and price changes (for shorting)
@@ -687,8 +696,12 @@ def get_price_changes(ta_dfs, col='ppo'):
         sells_buys['price_pct_change'] = sells_buys['price_change'] / sells_buys['sell_price']
 
 
-        time_diffs_sell_buy = (buys.index - sells.index).days
-        sells_buys.loc[:, 'time_diffs'] = time_diffs_sell_buy
+        time_diffs_days_sell_buy = (buys.index - sells.index).days
+        sells_buys.loc[:, 'time_diffs_days'] = time_diffs_days_sell_buy
+        if timeframe == '3 mins':
+            time_diffs_mins_sell_buy = (buys.index - sells.index).total_seconds() / 60
+            sells_buys.loc[:, 'time_diffs_mins'] = time_diffs_mins_sell_buy
+
         full_sells_buys = pd.concat([full_sells_buys, sells_buys])
 
         # plt.hist(time_diffs_sell_buy, bins=30); plt.show()
@@ -697,7 +710,7 @@ def get_price_changes(ta_dfs, col='ppo'):
     return full_sells_buys, full_buys_sells
 
 
-def plot_price_changes(full_sells_buys, full_buys_sells, col):
+def plot_price_changes(full_sells_buys, full_buys_sells, col, timeframe='1D'):
     """
     plots price changes from get_price_changes
     """
@@ -716,18 +729,30 @@ def plot_price_changes(full_sells_buys, full_buys_sells, col):
     plt.title(col + ' buys->sells price pct change, <200%')
     plt.show()
 
-
-    plt.scatter(sells_buys['time_diffs'], sells_buys['price_pct_change'])
+    plt.scatter(full_sells_buys['time_diffs_days'], full_sells_buys['price_pct_change'])
     plt.xlabel('time diffs (days)')
     plt.ylabel('price pct change')
     plt.title(col + 'sells->buys price pct change vs days')
     plt.show()
 
-    plt.scatter(buys_sells['time_diffs'], buys_sells['price_pct_change'])
+    plt.scatter(full_buys_sells['time_diffs_days'], full_buys_sells['price_pct_change'])
     plt.xlabel('time diffs (days)')
     plt.ylabel('price pct change')
     plt.title(col + 'buys->sells price pct change vs days')
     plt.show()
+
+    if timeframe == '3 mins':
+        plt.scatter(full_sells_buys['time_diffs_mins'], full_sells_buys['price_pct_change'])
+        plt.xlabel('time diffs (mins)')
+        plt.ylabel('price pct change')
+        plt.title(col + 'sells->buys price pct change vs minutes')
+        plt.show()
+
+        plt.scatter(full_buys_sells['time_diffs_mins'], full_buys_sells['price_pct_change'])
+        plt.xlabel('time diffs (mins)')
+        plt.ylabel('price pct change')
+        plt.title(col + 'buys->sells price pct change vs minutes')
+        plt.show()
 
 
 # TODO: get stocks with best expected values from buys sell and sells buys DFs
@@ -767,8 +792,83 @@ def get_bullish_bearish_market_ranges(dfs):
     bear_bull_df_qqq = get_bearish_bullish_full_df(dfs['QQQ'])
     bear_bull_df_dia = get_bearish_bullish_full_df(dfs['DIA'])
 
+
 if __name__ == "__main__":
+    sys.path.append('../stocktwits')
+    import get_st_data as gt
+
+    timeframe = '3 mins'
+    # tsla_3min = gt.load_ib_data('TSLA', timeframe='3 mins')
+    # box_3min = gt.load_ib_data('BOX', timeframe='3 mins')
+    # cron_3min = gt.load_ib_data('CRON', timeframe='3 mins')
+    abbv_3min = gt.load_ib_data('ABBV', timeframe=timeframe)
+    abbv_3min_price = abbv_3min[['open', 'high', 'low', 'close', 'volume']].dropna()
+    aapl_3min = gt.load_ib_data('AAPL', timeframe=timeframe)
+    # need to forward fill some missing values
+    aapl_3min = aapl_3min.ffill()
+    ta = get_TAs(aapl_3min)
+    ta_dfs = {'AAPL': ta}
+    col = 'trix'
+    full_sells_buys, full_buys_sells = get_price_changes(ta_dfs, col=col, source='ib', timeframe=timeframe)
+    plot_price_changes(full_sells_buys, full_buys_sells, col=col, timeframe=timeframe)
+
+    # try ML
+    feature_cols = ['obv_cl',
+                    'obv_cl_ema_14',
+                    'rsi_cl_5',
+                    'rsi_cl_14',
+                    'ppo_cl',
+                    'ppo_cl_signal',
+                    'trix_cl_12',
+                    'trix_cl_12_signal',
+                    'mdi',
+                    'pldi']
+    # predict prices 1, 3, 5 hours later
+    target_cols = []
+    for i in [1, 3, 5]:
+        target = str(i) + 'h_price_chg_pct'
+        target_cols.append(target)
+        ta[target] = ta['close'].pct_change(i * 20).shift(-i * 20)
+
+    target = '30m_price_chg_pct'
+    target_cols.append(target)
+    ta[target] = ta['close'].pct_change(10).shift(-10)
+
+    ta_nona = ta.iloc[:-5 * 20]
+    features = ta_nona[feature_cols]
+    targets = ta_nona[target_cols]
+
+    import seaborn as sns
+    sns.heatmap(ta_nona.iloc[-10000:][feature_cols + target_cols].corr(), annot=True)
+    plt.show()
+
+    # tr_size = int(0.8 * features.shape[0])
+    tr_feats = features.iloc[-20000:-5000]
+    te_feats = features.iloc[-5000:]
+    tr_targs = targets.iloc[-20000:-5000]
+    te_targs = targets.iloc[-5000:]
+    from sklearn.ensemble import RandomForestRegressor
+
+    rfr = RandomForestRegressor(n_estimators=300, max_features=2, min_samples_split=4, max_depth=20, random_state=42, n_jobs=-1)
+    rfr.fit(tr_feats, tr_targs)
+    print(rfr.score(tr_feats, tr_targs))
+    print(rfr.score(te_feats, te_targs))
+    tr_preds = rfr.predict(tr_feats)
+    te_preds = rfr.predict(te_feats)
+
+    plt.title('1h predictions vs actual')
+    plt.scatter(tr_preds[:, 0], tr_targs.iloc[:, 0], label='train')
+    plt.scatter(te_preds[:, 0], te_targs.iloc[:, 0], label='test')
+    plt.legend()
+    plt.show()
+
+
+
+    # bb = get_bearish_bullish_full_df(ta)
     pass
+    # try trend-following on 3-min data
+
+
     # ta_dfs, bear_bull_sigs_df = scan_all_quandl_stocks()
     #
     # full_sells_buys_rsi_14, full_buys_sells_rsi_14 = get_price_changes(ta_dfs, col='rsi_14')

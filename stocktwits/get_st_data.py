@@ -1572,6 +1572,7 @@ def get_stock_watchlist(update=True, return_trending=False):
         trending = None
         while trending is None:
             trending = api.get_trending_stocks()
+            if trending is not None: break
             print('sleeping 30s')
             time.sleep(30)
 
