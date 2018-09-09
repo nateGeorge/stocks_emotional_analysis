@@ -529,7 +529,7 @@ def scan_all_quandl_stocks():
         temp_df['days_since_short_rsi_sell'] = (ta_dfs[t].index.max() - ta_dfs[t][ta_dfs[t]['rsi_5_sell_signal'] == 1].index.max()).days
         temp_df['days_since_mid_rsi_sell'] = (ta_dfs[t].index.max() - ta_dfs[t][ta_dfs[t]['rsi_14_sell_signal'] == 1].index.max()).days
 
-        bear_bull_sigs_df = pd.concat([bear_bull_sigs_df, temp_df])
+        bear_bull_sigs_df = pd.concat([bear_bull_sigs_df, temp_df], sort=True)
 
     # calculate some averages
     bear_bull_sigs_df['overall_bear_bull'] = bear_bull_sigs_df[list(bullish_signals.keys())].mean(axis=1) - bear_bull_sigs_df[list(bearish_signals.keys())].mean(axis=1)
@@ -878,4 +878,15 @@ if __name__ == "__main__":
     # full_df_buy[full_df_buy['days_since_mid_rsi_buy'] < 4][['price_pct_change', 'time_diffs', 'days_since_mid_rsi_buy', 'overall_bear_bull']].head(50)
     #
     #
+    print('getting ta dfs and bear bull sigs df...')
+    ta_dfs, bear_bull_sigs_df = scan_all_quandl_stocks()
+
+    print('getting rsi_14 buys sells')
+    full_sells_buys_rsi_14, full_buys_sells_rsi_14 = get_price_changes(ta_dfs, col='rsi_14')
+
+    buy_ticker_groups  = full_buys_sells_rsi_14[['ticker', 'price_pct_change', 'time_diffs']].groupby('ticker').mean().sort_values(by='price_pct_change', ascending=False)
+    full_df_buy = buy_ticker_groups.merge(bear_bull_sigs_df, left_index=True, right_index=True)
+    full_df_buy[full_df_buy['days_since_mid_rsi_buy'] < 4][['price_pct_change', 'time_diffs', 'days_since_mid_rsi_buy', 'overall_bear_bull']].head(50)
+
+
     # bear_bull_sigs_df.loc['EGC']
