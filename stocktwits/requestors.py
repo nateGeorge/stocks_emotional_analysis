@@ -76,6 +76,13 @@ class Requests():
                     resp = requests.get(url, params=params, timeout=5)
                     calls_left, limit_reset_time = get_header_info(resp.headers)
                     if calls_left is None:
+                        # TODO: wrap iterating thru access tokens in a function
+                        self.at_index = (self.at_index + 1) % 6
+                        at = list(self.ats.items())[self.at_index][0]
+                        self.set_at(at)
+                        params['access_token'] = self.at_val
+                        print('trying next access token:', at)
+                        tries += 1
                         continue
                     self.ats[self.at] = [calls_left, limit_reset_time]
                     if calls_left < calls_threshold:
