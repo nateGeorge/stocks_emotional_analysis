@@ -174,7 +174,12 @@ def scrape_historical_data(ticker='AAPL', verbose=True, only_update_latest=False
                 print(str(req_left), 'requests left')
 
             time_elapsed = time.time() - start
-            st, req_left, reset_time = api.get_stock_stream(ticker, {'max': earliest})
+            try:
+                st, req_left, reset_time = api.get_stock_stream(ticker, {'max': earliest})
+            except:  # sometimes some weird connection issues
+                time.sleep(5)
+                continue
+
             if req_left is None:
                 print('requests left is None, probably need to wait longer...')
                 time.sleep(5 * 60)
