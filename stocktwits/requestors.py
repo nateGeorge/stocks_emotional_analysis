@@ -73,7 +73,12 @@ class Requests():
                 tries = 1
                 while tries < 6:
                     # TODO: catch catch error when connection is lost -- happens here on requests.get.
-                    resp = requests.get(url, params=params, timeout=5)
+                    try:
+                        resp = requests.get(url, params=params, timeout=5)
+                    except:  # TODO: catch exact error
+                        time.sleep(10)
+                        continue
+
                     calls_left, limit_reset_time = get_header_info(resp.headers)
                     if calls_left is None:
                         # TODO: wrap iterating thru access tokens in a function
