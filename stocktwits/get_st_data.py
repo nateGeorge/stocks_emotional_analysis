@@ -28,6 +28,8 @@ import seaborn as sns
 import sys
 sys.path.append('../../scrape_ib')
 import scrape_ib
+sys.path.append('../../stock_prediction/code')
+import dl_quandl_EOD as dlq
 
 
 def make_dirs_from_home_dir(path):
@@ -344,7 +346,7 @@ def check_if_data_up_to_date(latest_data_date):
     return True
 
 
-def combine_with_price_data(ticker='TSLA', must_be_up_to_date=True):
+def combine_with_price_data_ib(ticker='TSLA', must_be_up_to_date=True):
     # meld with price data and see if any correlations
     trades_3min = scrape_ib.load_data(ticker)  # by default loads 3 mins bars
     # check if data up to date, first check if data is same day as NY date
@@ -481,6 +483,101 @@ def combine_with_price_data(ticker='TSLA', must_be_up_to_date=True):
 
 
     return full_3min, full_daily, future_price_chg_cols
+
+
+def combine_with_price_data_quandl(ticker='TSLA', must_be_up_to_date=False):
+    # meld with price data and see if any correlations
+    stocks = dlq.load_stocks()
+
+    st = load_historical_data(ticker, must_be_up_to_date=must_be_up_to_date)  # get stock twits data
+    if st is None:  # data is not up to date
+        print('stocktwits data not up to date')
+        return None, None, None
+
+    st = st.iloc[::-1]  # reverse order from oldest -> newest to match quandl data
+    # create counts column for resampling
+    st['count'] = 1
+    st_min = st[['entities.sentiment.basic', 'entities.sentiment.basic.nona', 'compound', 'pos', 'neg', 'neu', 'count']]
+    # bars are labeled by the start of the time bin, so  use label='left'
+    st_min_1d = st_min.resample('1D', label='left').mean().ffill()  # forward fill because it's not frequent enough
+
+    st_min_1d['count'] = st['count'].resample('1D', label='left').sum().ffill()
+
+
+    # go through each unique date, get market open and close times for each day
+    # then get average of sentiment features from market closed times and add as new feature
+    unique_dates = np.unique(st_min_1d.index.date)
+    open_days = get_eastern_market_open_close()
+    last_close = None
+    # new_feats = {}
+    new_feats = pd.DataFrame()
+    for d in unique_dates:
+        if d in open_days.index:  # if it's a trading day...
+            open_time = open_days.loc[d]['market_open']
+            if last_close is None:
+                new_feats[d] = st_min_1d.loc[:open_time].mean()
+                new_feats[d]['count'] = st_min_3min.loc[:open_time, 'count'].sum()
+            else:
+                new_feats[d] = st_min_1d.loc[last_close:open_time].mean()
+                new_feats[d]['count'] = st_min_1d.loc[last_close:open_time, 'count'].sum()
+
+            last_close = open_days.loc[d]['market_open']
+
+    new_feats = new_feats.T
+    new_feats.columns = ['bearish_bullish_closed', 'bearish_bullish_closed.nona', 'compound_closed', 'pos_closed', 'neg_closed', 'neu_closed', 'count_closed']
+
+    st_full_1d = st_min_1d.copy()
+    nf_cols = new_feats.columns
+    for d in new_feats.index:
+        for c in nf_cols:
+            st_full_1d.loc[d, c] = new_feats.loc[d, c]
+
+    # merge sentiment with price data
+    st_daily = pd.concat([stocks[ticker], st_full_1d], axis=1)
+
+    # make more daily features
+    # weekdays : monday = 0, sunday = 6
+    st_daily['bear_count'] = st_min[st_min['entities.sentiment.basic'] == -1]['entities.sentiment.basic'].resample('1D', label='left').count()
+    st_daily['bull_count'] = st_min[st_min['entities.sentiment.basic'] == 1]['entities.sentiment.basic'].resample('1D', label='left').count()
+    st_daily['pos_count'] = st_min[st_min['compound'] > 0.05]['compound'].resample('1D', label='left').count()
+    st_daily['neg_count'] = st_min[st_min['compound'] < -0.05]['compound'].resample('1D', label='left').count()
+    st_weekend = st_min[st_min.index.weekday.isin(set([5, 6]))]
+    st_daily_weekend = st_weekend.resample('W-MON', label='right').mean()
+    st_daily['count'] = st_min['count'].resample('1D', label='left').sum().ffill()
+    st_daily_weekend['count'] = st_weekend['count'].resample('W-MON', label='right').sum().ffill()
+    st_daily_std = st_min.resample('1D', label='left').std().ffill()
+    st_daily_weekend_std = st_weekend.resample('W-MON', label='right').std().ffill()
+
+    # count column is all 0s
+    st_daily_std.drop('count', inplace=True, axis=1)
+    st_daily_weekend_std.drop('count', inplace=True, axis=1)
+
+    # rename columns for clarity
+    st_daily_std.columns = [c + '_std' for c in st_daily_std.columns]
+    st_daily_weekend.columns = [c + '_weekend' for c in st_daily_weekend.columns]
+    st_daily_weekend_std.columns = [c + '_weekend_std' for c in st_daily_weekend_std.columns]
+
+
+    # combine regular sentiment and standard deviation dataframes
+    st_daily_full = pd.concat([st_daily, st_daily_std], axis=1)
+    # get rid of weekend days in resampled data
+    to_drop_idxs = st_daily_full[st_daily_full.index.weekday.isin(set([5, 6]))].index
+    st_daily_full.drop(to_drop_idxs, inplace=True)
+    # add weekend data to daily df
+    st_daily_full = pd.concat([st_daily_full, st_daily_weekend, st_daily_weekend_std], axis=1).ffill().dropna()
+
+    full_daily = st_daily.copy()#pd.concat([trades_1d, st_daily_full], axis=1)
+    future_price_chg_cols = []
+    for i in range(1, 11):
+        full_daily[str(i) + 'd_price_chg_pct'] = full_daily['Adj_Close'].pct_change(i)
+        full_daily[str(i) + 'd_future_price_chg_pct'] = full_daily[str(i) + 'd_price_chg_pct'].shift(-i)
+        # full_daily[str(i) + 'd_future_price_chg_pct'] = full_daily[str(i) + 'd_future_price'].pct_change(i)
+        future_price_chg_cols.append(str(i) + 'd_future_price_chg_pct')
+        # drop future price column because we care about % change
+        # full_daily.drop(str(i) + 'd_future_price', axis=1, inplace=True)
+
+
+    return full_daily, future_price_chg_cols
 
 
 def get_param_grid(num_feats):
@@ -1641,7 +1738,7 @@ def update_lots_of_tickers():
 
 def do_ml(ticker, must_be_up_to_date=False):
     df = load_historical_data(ticker)
-    full_3min, full_daily, future_price_chg_cols = combine_with_price_data(ticker, must_be_up_to_date)
+    full_3min, full_daily, future_price_chg_cols = combine_with_price_data_ib(ticker, must_be_up_to_date)
     ml_on_combined_data(ticker, full_daily, future_price_chg_cols)
 
 
@@ -1670,7 +1767,7 @@ def plot_close_bear_bull_count(full_daily):
 
 # get predictions for all stocks in watchlist
 # tickers = get_stock_watchlist()
-# full_3min, full_daily, future_price_chg_cols = combine_with_price_data('SNAP')
+# full_3min, full_daily, future_price_chg_cols = combine_with_price_data_ib('SNAP')
 
 # # find large gap in data for missing intermediate data
 # tsla = load_historical_data('TSLA')
