@@ -7,8 +7,9 @@ import pickle as pk
 from pprint import pprint
 from collections import OrderedDict
 
-import datetime
 import pytz
+import talib
+import datetime
 import pandas_market_calendars as mcal
 import pandas as pd
 import numpy as np
@@ -516,7 +517,7 @@ def combine_with_price_data_quandl(ticker='TSLA', must_be_up_to_date=False):
             open_time = open_days.loc[d]['market_open']
             if last_close is None:
                 new_feats[d] = st_min_1d.loc[:open_time].mean()
-                new_feats[d]['count'] = st_min_3min.loc[:open_time, 'count'].sum()
+                new_feats[d]['count'] = st_min_1d.loc[:open_time, 'count'].sum()
             else:
                 new_feats[d] = st_min_1d.loc[last_close:open_time].mean()
                 new_feats[d]['count'] = st_min_1d.loc[last_close:open_time, 'count'].sum()
@@ -533,7 +534,9 @@ def combine_with_price_data_quandl(ticker='TSLA', must_be_up_to_date=False):
             st_full_1d.loc[d, c] = new_feats.loc[d, c]
 
     # merge sentiment with price data
-    st_daily = pd.concat([stocks[ticker], st_full_1d], axis=1)
+    stock_df = stocks[ticker].copy()
+    stock_df.index = stock_df.index.tz_localize('America/New_York')
+    st_daily = pd.concat([stock_df, st_full_1d], axis=1)
 
     # make more daily features
     # weekdays : monday = 0, sunday = 6
@@ -541,6 +544,11 @@ def combine_with_price_data_quandl(ticker='TSLA', must_be_up_to_date=False):
     st_daily['bull_count'] = st_min[st_min['entities.sentiment.basic'] == 1]['entities.sentiment.basic'].resample('1D', label='left').count()
     st_daily['pos_count'] = st_min[st_min['compound'] > 0.05]['compound'].resample('1D', label='left').count()
     st_daily['neg_count'] = st_min[st_min['compound'] < -0.05]['compound'].resample('1D', label='left').count()
+    # get moving average of sentiments
+    # bear/bull from ST
+    st_daily['bear_bull_EMA'] = talib.EMA(st_daily['entities.sentiment.basic'].values, timeperiod=9)
+    st_daily['compound_EMA'] = talib.EMA(st_daily['compound'].values, timeperiod=9)
+
     st_weekend = st_min[st_min.index.weekday.isin(set([5, 6]))]
     st_daily_weekend = st_weekend.resample('W-MON', label='right').mean()
     st_daily['count'] = st_min['count'].resample('1D', label='left').sum().ffill()
@@ -566,7 +574,7 @@ def combine_with_price_data_quandl(ticker='TSLA', must_be_up_to_date=False):
     # add weekend data to daily df
     st_daily_full = pd.concat([st_daily_full, st_daily_weekend, st_daily_weekend_std], axis=1).ffill().dropna()
 
-    full_daily = st_daily.copy()#pd.concat([trades_1d, st_daily_full], axis=1)
+    full_daily = st_daily_full.copy()#pd.concat([trades_1d, st_daily_full], axis=1)
     future_price_chg_cols = []
     for i in range(1, 11):
         full_daily[str(i) + 'd_price_chg_pct'] = full_daily['Adj_Close'].pct_change(i)
@@ -1567,48 +1575,73 @@ def examine_autocorrelations():
     pass
 
 
-def plot_combined_data(full_df):
+def plot_combined_data(full_df, only_daily=True, is_ib=False):
+    """
+    full_df should be dataframe from combine_with_price_data_ib or combine_with_price_data_quandl
+
+    if using combine_with_price_data_quandl, only_daily should be True
+    otherwise, needs to be something with 8h_future_price_chg column
+    """
     # plt.scatter(full_tsla['bearish_bullish_closed'], full_tsla['1h_future_price_chg'])
     f = plt.figure(figsize=(12, 12))
     sns.heatmap(full_df.corr(), annot=True)
     plt.tight_layout()
+    plt.show()
 
-    plt.scatter(full_df['bearish_bullish_closed'], full_df['8h_future_price_chg'])
-    plt.scatter(full_df['entities.sentiment.basic'], full_df['8h_future_price_chg'])
+    if not only_daily:
+        plt.scatter(full_df['bearish_bullish_closed'], full_df['8h_future_price_chg'])
+        plt.show()
 
-    plt.scatter(full_df['opt_vol_high'], full_df['8h_future_price_chg'])
+        plt.scatter(full_df['entities.sentiment.basic'], full_df['8h_future_price_chg'])
+        plt.show()
 
-    # when it was -0.05, strong correlation to negative returns -- all on one day, 3/28
-    plt.scatter(full_df['compound_closed'], full_df['8h_future_price_chg'])
+        plt.scatter(full_df['opt_vol_high'], full_df['8h_future_price_chg'])
+        plt.show()
+
+        # when it was -0.05, strong correlation to negative returns -- all on one day, 3/28
+        plt.scatter(full_df['compound_closed'], full_df['8h_future_price_chg'])
+        plt.show()
 
 
-    non_price_chg_cols = [c for c in full_daily.columns if c not in future_price_chg_cols]
+    non_price_chg_cols = [c for c in full_df.columns if c not in future_price_chg_cols]
     f = plt.figure(figsize=(20, 20))
-    sns.heatmap(full_daily.corr().loc[non_price_chg_cols, future_price_chg_cols], annot=True)
+    sns.heatmap(full_df.corr().loc[non_price_chg_cols, future_price_chg_cols], annot=True)
     plt.tight_layout()
     plt.show()
 
 
     # slight positive correlation
-    plt.scatter(full_daily['entities.sentiment.basic_std'], full_daily['10d_future_price_chg_pct'])
+    plt.scatter(full_df['entities.sentiment.basic_std'], full_df['10d_future_price_chg_pct'])
+    plt.show()
 
-    plt.scatter(full_daily['pos_weekend_std'], full_daily['10d_future_price_chg_pct'])
+    plt.scatter(full_df['pos_weekend_std'], full_df['10d_future_price_chg_pct'])
+    plt.show()
 
-    plt.scatter(full_daily['opt_vol_close'], full_daily['10d_future_price_chg_pct'])
+    if is_ib:
+        plt.scatter(full_df['opt_vol_close'], full_df['10d_future_price_chg_pct'])
+        plt.show()
 
-    plt.scatter(full_daily['count'], full_daily['10d_future_price_chg_pct'])
+    plt.scatter(full_df['count'], full_df['10d_future_price_chg_pct'])
+    plt.show()
 
-    plt.scatter(full_daily['compound'], full_daily['1d_future_price_chg_pct'])
+    plt.scatter(full_df['compound'], full_df['1d_future_price_chg_pct'])
+    plt.show()
 
-    plt.scatter(full_daily['entities.sentiment.basic'], full_daily['10d_future_price_chg_pct'])
+    plt.scatter(full_df['entities.sentiment.basic'], full_df['10d_future_price_chg_pct'])
+    plt.show()
 
-    plt.scatter(full_daily['compound'], full_daily['10d_future_price_chg_pct'])
-    plt.scatter(full_daily['pos'], full_daily['10d_future_price_chg_pct'])
+    plt.scatter(full_df['entities.sentiment.basic_weekend'], full_df['10d_future_price_chg_pct'])
+    plt.show()
 
+    plt.scatter(full_df['compound'], full_df['10d_future_price_chg_pct'])
+    plt.show()
+
+    plt.scatter(full_df['pos'], full_df['10d_future_price_chg_pct'])
+    plt.show()
     # get things correlated with 5d change > 0.1
-    idx_5d = np.where(full_daily.columns == '5d_future_price_chg_pct')[0][0]
-    idx_1d = np.where(full_daily.columns == '1d_future_price_chg_pct')[0][0]
-    full_daily.columns[:idx_1d][(full_daily.corr() > 0.1).iloc[:idx_1d, idx_5d]]
+    # idx_5d = np.where(full_df.columns == '5d_future_price_chg_pct')[0][0]
+    # idx_1d = np.where(full_df.columns == '1d_future_price_chg_pct')[0][0]
+    # full_df.columns[:idx_1d][(full_df.corr() > 0.1).iloc[:idx_1d, idx_5d]]
 
     # get daily price change and daily bearish/bullish and sentiments
 
@@ -1761,17 +1794,29 @@ def plot_close_bear_bull_count(full_daily):
     plt.show()
 
 
+if __name__ == "__main__":
+    full_daily, future_price_chg_cols = combine_with_price_data_quandl(ticker='QQQ', must_be_up_to_date=False)
+    # look at correlation between moving average sentiment/compound score and future prices
+    sns.heatmap(full_daily[['bear_bull_EMA', 'compound_EMA'] + future_price_chg_cols].corr(), annot=True)
+    plt.show()
 
-# TODO: plot above with counts, create new feature from counts and bear/bull, resample bear/bull with sum instead of mean (and do for individual bear/bull)
-# examine what happened when it went bearish for a sec then back to bullish
+    # somewhat of a negative trend...should be enough to add to a ML algo
+    plt.scatter(full_daily['bear_bull_EMA'], full_daily['10d_future_price_chg_pct'])
+    plt.show()
 
-# get predictions for all stocks in watchlist
-# tickers = get_stock_watchlist()
-# full_3min, full_daily, future_price_chg_cols = combine_with_price_data_ib('SNAP')
+    # look at patterns with price
+    full_daily[['bear_bull_EMA', 'Adj_Close']].plot(subplots=True); plt.show()
 
-# # find large gap in data for missing intermediate data
-# tsla = load_historical_data('TSLA')
-# index_diff = tsla.index[:-1] - tsla.index[1:]
-# max_diff_idx = np.argmax(index_diff)
-# tsla.iloc[max_diff_idx]
-# tsla.iloc[max_diff_idx + 1]
+    # TODO: plot above with counts, create new feature from counts and bear/bull, resample bear/bull with sum instead of mean (and do for individual bear/bull)
+    # examine what happened when it went bearish for a sec then back to bullish
+
+    # get predictions for all stocks in watchlist
+    # tickers = get_stock_watchlist()
+    # full_3min, full_daily, future_price_chg_cols = combine_with_price_data_ib('SNAP')
+
+    # # find large gap in data for missing intermediate data
+    # tsla = load_historical_data('TSLA')
+    # index_diff = tsla.index[:-1] - tsla.index[1:]
+    # max_diff_idx = np.argmax(index_diff)
+    # tsla.iloc[max_diff_idx]
+    # tsla.iloc[max_diff_idx + 1]
