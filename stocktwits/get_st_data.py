@@ -1795,17 +1795,18 @@ def plot_close_bear_bull_count(full_daily):
 
 
 if __name__ == "__main__":
-    full_daily, future_price_chg_cols = combine_with_price_data_quandl(ticker='QQQ', must_be_up_to_date=False)
-    # look at correlation between moving average sentiment/compound score and future prices
-    sns.heatmap(full_daily[['bear_bull_EMA', 'compound_EMA'] + future_price_chg_cols].corr(), annot=True)
-    plt.show()
+    def do_some_analysis():
+        full_daily, future_price_chg_cols = combine_with_price_data_quandl(ticker='QQQ', must_be_up_to_date=False)
+        # look at correlation between moving average sentiment/compound score and future prices
+        sns.heatmap(full_daily[['bear_bull_EMA', 'compound_EMA'] + future_price_chg_cols].corr(), annot=True)
+        plt.show()
 
-    # somewhat of a negative trend...should be enough to add to a ML algo
-    plt.scatter(full_daily['bear_bull_EMA'], full_daily['10d_future_price_chg_pct'])
-    plt.show()
+        # somewhat of a negative trend...should be enough to add to a ML algo
+        plt.scatter(full_daily['bear_bull_EMA'], full_daily['10d_future_price_chg_pct'])
+        plt.show()
 
-    # look at patterns with price
-    full_daily[['bear_bull_EMA', 'Adj_Close']].plot(subplots=True); plt.show()
+        # look at patterns with price
+        full_daily[['bear_bull_EMA', 'Adj_Close']].plot(subplots=True); plt.show()
 
     # TODO: plot above with counts, create new feature from counts and bear/bull, resample bear/bull with sum instead of mean (and do for individual bear/bull)
     # examine what happened when it went bearish for a sec then back to bullish
