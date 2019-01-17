@@ -22,6 +22,9 @@ except:
 
 
 # StockTwits details
+# need to get ATs from oath/token call to API:
+# https://api.stocktwits.com/developers/docs/authentication
+# or use get_ats.py to get them
 ST_BASE_URL = 'https://api.stocktwits.com/api/2/'
 all_ats = ['', 'stock_twits_testing_at', 'stock_twits_testing2_at', 'stock_twits_aapl1', 'stock_twits_vioo', 'stock_twits_sly']
 at_name = all_ats[0]
