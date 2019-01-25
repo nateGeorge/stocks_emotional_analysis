@@ -1,3 +1,7 @@
+"""
+automation for getting access tokens
+"""
+
 import os
 from collections import OrderedDict
 
