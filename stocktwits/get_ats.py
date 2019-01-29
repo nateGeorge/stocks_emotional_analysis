@@ -67,3 +67,5 @@ driver = webdriver.Firefox()
 ats = OrderedDict()
 for n, k, s in zip(app_names, consumer_keys, consumer_secrets):
     ats[n] = get_at(driver, k, s)
+
+driver.quit()
