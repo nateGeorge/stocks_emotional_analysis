@@ -7,6 +7,7 @@ import pickle as pk
 from pprint import pprint
 from collections import OrderedDict
 
+import glob
 import pytz
 import talib
 import datetime
@@ -31,6 +32,8 @@ sys.path.append('../../scrape_ib')
 import scrape_ib
 sys.path.append('../../stock_prediction/code')
 import dl_quandl_EOD as dlq
+
+DATA_DIR = '/home/nate/Dropbox/data/stocktwits/data/'
 
 
 def make_dirs_from_home_dir(path):
@@ -114,7 +117,7 @@ def scrape_historical_data(ticker='AAPL', verbose=True, only_update_latest=False
     """
     #TODO: deal with misssing data in the middle somehow...
     # filepath = get_home_dir() + 'stocktwits/data/' + ticker + '/'
-    filepath = '/home/nate/Dropbox/data/stocktwits/data/' + ticker + '/'
+    filepath = DATA_DIR + ticker + '/'
     if not os.path.exists(filepath): make_dirs(filepath)
     filename = filepath + ticker + '_all_messages.pk'
     new_filename = filepath + ticker + '_new_messages.pk'  # for new data when updating
@@ -1792,6 +1795,53 @@ def plot_close_bear_bull_count(full_daily):
     axs[3].plot(full_daily['neg_count'], c='r')
     axs[3].legend()
     plt.show()
+
+
+def convert_pickle_to_mongodb(ticker):
+    """
+    pickle files were used as a first storage mechanism, but are extremely slow to load.
+    This function moves the data from a pickle file into the mongodb.
+    """
+    filepath = DATA_DIR + ticker + '/'
+    filename = filepath + ticker + '_all_messages.pk'
+    with open(filename, 'rb') as f:
+        all_messages = pk.load(f)
+
+    DB = 'stocktwits'
+    client = MongoClient()
+    db = client[DB]
+    coll = db[ticker]
+    for m in tqdm(all_messages):
+        # check if already in DB...some dupes
+        if coll.find_one({'id': m['id']}) is None:
+            # restructure for more efficient storage
+            # --actually don't do for now, since some of the subdata changes over time
+            # m_restr = {'id': m['id'],
+            #             'body': m['body'],
+            #             'created_at': m['created_at'],
+            #             'user': }
+            coll.insert_one(m)
+
+
+    # checking what user profiles look like over time
+    # created = []
+    # user = []
+    # for m in all_messages:
+    #     if m['user']['id'] == 689515:
+    #         user.append(m['user'])
+    #         created.append(m['created_at'])
+
+    client.close()
+
+
+def convert_all_pickle_to_mongo():
+    """
+    converts all pickle files to mongodb storage
+    """
+    tickers = sorted([t.split('/')[-1] for t in glob.glob(DATA_DIR + '*')])
+    for t in tickers:
+        print('on', t)
+        convert_pickle_to_mongodb(t)
 
 
 if __name__ == "__main__":
