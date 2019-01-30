@@ -1,12 +1,15 @@
 # TODO: keep track of which tickers have reached end of data
 
 import os
+import gc
 import time
 import operator
 import pickle as pk
 from pprint import pprint
 from collections import OrderedDict
+from concurrent.futures import ProcessPoolExecutor
 
+import psutil
 import glob
 import pytz
 import talib
@@ -20,6 +23,9 @@ import dask.dataframe as dd
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.model_selection import ParameterGrid
 from tqdm import tqdm
+from pymongo import MongoClient
+from pymongo.errors import BulkWriteError
+from pprint import pprint
 
 import api  # local file in same directory
 
@@ -1804,6 +1810,14 @@ def convert_pickle_to_mongodb(ticker):
     """
     filepath = DATA_DIR + ticker + '/'
     filename = filepath + ticker + '_all_messages.pk'
+
+    # # as long as memory isn't too full, move on to next one
+    # # the biggest .pk file for SPY is 8GB on disk, and takes up about 65GB
+    # vmem = psutil.virtual_memory()
+    # pid = os.getpid()
+    # py = psutil.Process(pid)
+    # memoryUse = py.memory_info()[0]/2.**30
+
     with open(filename, 'rb') as f:
         all_messages = pk.load(f)
 
@@ -1811,6 +1825,31 @@ def convert_pickle_to_mongodb(ticker):
     client = MongoClient()
     db = client[DB]
     coll = db[ticker]
+
+    # remove duplicates from entries -- takes way too long
+    # non_dupes = []
+    # for m in tqdm(all_messages):
+    #     if m not in non_dupes:
+    #         non_dupes.append(m)
+
+    """
+    # drop _id column so can use insert_many
+    # seems to only get added upon insert_many
+    for m in tqdm(all_messages):
+        if '_id' in m:
+            del m['_id']
+    """
+
+
+    try:
+        coll.insert_many(all_messages, ordered=False)
+    except BulkWriteError as bwe:
+        pass
+        # would print the error, but pretty much always duplicates
+        # pprint(bwe.details)
+
+    """
+    # too slow -- estimated at 130 hours for AAPL
     for m in tqdm(all_messages):
         # check if already in DB...some dupes
         if coll.find_one({'id': m['id']}) is None:
@@ -1821,6 +1860,7 @@ def convert_pickle_to_mongodb(ticker):
             #             'created_at': m['created_at'],
             #             'user': }
             coll.insert_one(m)
+    """
 
 
     # checking what user profiles look like over time
@@ -1831,17 +1871,39 @@ def convert_pickle_to_mongodb(ticker):
     #         user.append(m['user'])
     #         created.append(m['created_at'])
 
+    del all_messages
+    gc.collect()
     client.close()
+    print('finished ', ticker)
 
 
-def convert_all_pickle_to_mongo():
+def convert_all_pickle_to_mongo(linear=False, max_workers=None):
     """
     converts all pickle files to mongodb storage
     """
     tickers = sorted([t.split('/')[-1] for t in glob.glob(DATA_DIR + '*')])
-    for t in tickers:
-        print('on', t)
-        convert_pickle_to_mongodb(t)
+    # tickers to run separately since they have huge files
+    ignore_tickers = ['SPY', 'FB', 'AMZN', 'AAPL', 'BB', 'NFLX', 'QQQ', 'BABA', 'DRYS', 'UVXY', 'GOOG', 'NUGT', 'AMD', 'JNUG', 'TWTR', 'SNAP', 'BAC', 'VXX']
+    ignore_set = set(ignore_tickers)
+    if linear:
+        for t in tqdm(tickers):
+            print('on', t)
+            convert_pickle_to_mongodb(t)
+    else:
+        # jobs = []
+        with ProcessPoolExecutor(max_workers=max_workers) as executor:
+            for t in tickers:
+                if t not in ignore_set:
+                    executor.submit(convert_pickle_to_mongodb, t)
+                    # jobs.append(t)
+
+        for t in ignore_tickers:
+            convert_pickle_to_mongodb(t)
+
+        # for t in jobs:
+        #     pass
+
+
 
 
 if __name__ == "__main__":
