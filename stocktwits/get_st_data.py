@@ -81,6 +81,16 @@ def get_home_dir(repo_name='stocks_emotional_analysis'):
 
 
 def check_new_data(latest, st, all_messages, all_new_messages, filename, new_filename):
+    """
+    checks to see if all new data has been retrieved based on 'latest'
+    args:
+    latest -- int; should be latest id from current data in db
+    st -- json object returned from API
+    all_messages -- dict with all current messages
+    all_new_messages -- dict with all new messages just retrieved
+    filename -- string; where full data is stored
+    new_filename -- string; where updated data is stored
+    """
     new_ids = [m['id'] for m in st['messages']]
     if latest in new_ids:
         print('got all new data')
@@ -1904,6 +1914,163 @@ def convert_all_pickle_to_mongo(linear=False, max_workers=None):
         #     pass
 
 
+def scrape_historical_data_mongo(ticker='AAPL', verbose=True, only_update_latest=False):
+    """
+    finds latest datapoint from db and updates from there
+
+    API returns the 30 latest posts, so have to work backwards from the newest posts
+
+    args:
+    ticker -- string like 'AAPL'
+    verbose -- boolean, prints debugs if True
+    only_update_latest -- boolean; if True, will only get the latest updates
+                            (from most recent down to max already in db)
+                            Otherwise, gets updates from earliest in db to first
+                            post
+    """
+    # TODO: deal with missing data in the middle somehow...
+    DB = 'stocktwits'
+    client = MongoClient()
+    db = client[DB]
+    # drop temp_data collection so no left over data is in there
+    db.drop_collection('temp_data')
+    if ticker in db.list_collection_names():
+        coll = db[ticker]
+        earliest = coll.find_one(sort=[('id', 1)])['id']  #should also be able to do this: all_messages[-1]['id']
+        latest = coll.find_one(sort=[('id', -1)])['id']
+    else:
+        print('no previously existing data')
+        earliest = None
+        latest = None
+
+    if only_update_latest:
+        # TODO: deal with existing new messages, just starting over if partially completed for now
+        earliest = None
+        coll = db['temp_data']
+        print('going to update only the latest messages')
+    else:
+        print('going to get the earliest messages to the end')
+
+    start = time.time()
+    # returns a dictionary with keys ['cursor', 'response', 'messages', 'symbol']
+    # docs say returns less than or equal to max, but seems to be only less than
+    # get first request
+    st = None
+    while st in [None, False]:
+        st, req_left, reset_time = api.get_stock_stream(ticker, {'max': earliest})
+        if st is None:
+            print('returned None for some reason, sleeping 1 min and trying again')
+            time.sleep(60)
+        elif st is False:
+            print('tried all access tokens, none have enough calls left')
+            print('sleeping 5 minutes')
+            time.sleep(60*5)
+
+    if only_update_latest:
+        try:
+            coll.insert_many(st['messages'], ordered=False)
+        except BulkWriteError as bwe:
+            pass
+        # see if we got all the new data yet
+        if check_new_data(latest, st, all_messages, new_messages, filename, new_filename):
+            return
+    else:
+        # insert into main collection
+        try:
+            coll.insert_many(st['messages'], ordered=False)
+        except BulkWriteError as bwe:
+            pass
+
+    num_calls = 1
+
+    while True:
+        if st['cursor']['more']:
+            if verbose:
+                print('getting more data, made', str(num_calls), 'calls so far')
+                print(str(req_left), 'requests left')
+
+            time_elapsed = time.time() - start
+            try:
+                st, req_left, reset_time = api.get_stock_stream(ticker, {'max': earliest})
+                if st not in [None, False] and len(st['messages'] > 0):
+                    try:
+                        coll.insert_many(st['messages'], ordered=False)
+                    except BulkWriteError as bwe:
+                        pass
+            except:  # sometimes some weird connection issues
+                time.sleep(5)
+                continue
+
+            if req_left is None:
+                print('requests left is None, probably need to wait longer...')
+                time.sleep(5 * 60)
+                st = {'cursor': {'more': True}}
+                continue
+            elif req_left is False:
+                print('requests left is False, probably need to wait longer...')
+                time.sleep(5 * 60)
+                st = {'cursor': {'more': True}}
+                continue
+            elif req_left < 2:  # or (time_elapsed < 3600 and num_calls > 398)
+                print('made too many calls too fast, need to change access token or')
+                print('wait another', str(round((3600 - time_elapsed) / 60)), 'minutes')
+                print('made', str(num_calls), 'calls in', str(round(time_elapsed)), 'seconds')
+
+                # TODO: sleep until reset time from header is met
+                time.sleep(3601 - time_elapsed)
+                start = time.time()
+                num_calls = 0
+
+            earliest = st['cursor']['max']
+            if st is None:
+                print('returned None for some reason')
+                st = {'cursor': {'more': True}}
+                continue
+            elif st is False:
+                print('tried all access tokens, sleeping for 5 mins')
+                time.sleep(5*60)
+                st = {'cursor': {'more': True}}
+                continue
+
+            if only_update_latest:
+                if check_new_data(latest, st, all_messages, new_messages, filename, new_filename):
+                    return
+                    break  # just in case
+
+            num_calls += 1
+            # seems to take long enough that we don't need to sleep
+            # time.sleep(0.117)
+        else:
+            print('reached end of data')
+            break
+
+    # TODO: copy data from temp_data to main collection
+
+
+def check_new_data_mongo(latest, st, all_messages, all_new_messages, filename, new_filename):
+    """
+    checks to see if all new data has been retrieved based on 'latest'
+    if latest is in st ids, then return True, else False
+
+    args:
+    latest -- int; should be latest id from current data in db
+    st -- json object returned from API
+    """
+    new_ids = [m['id'] for m in st['messages']]
+    if latest in new_ids:
+        print('got all new data')
+        new_msg_idx = np.where(latest == np.array(new_ids))[0][0]
+        new_messages = st['messages'][:new_msg_idx]
+        all_new_messages.extend(new_messages)
+        all_messages = all_new_messages + all_messages
+        write_files(all_messages, filename, all_new_messages, new_filename, only_update_latest=True)
+        # delete temp new_messages file
+        if os.path.exists(new_filename):
+            os.remove(new_filename)
+
+        return True
+
+    return False
 
 
 if __name__ == "__main__":
