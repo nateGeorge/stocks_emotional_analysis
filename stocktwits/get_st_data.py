@@ -2090,9 +2090,11 @@ def check_new_data_mongo(latest, st, coll, db, ticker):
     ticker -- string, like 'AAPL'
     """
     new_ids = [m['id'] for m in st['messages']]
-    if latest in set(new_ids):
+    # old way of doing it, but doesn't work if latest message was deleted!
+    # if latest in set(new_ids):
+    if min(new_ids) < latest:
         print('got all new data')
-        new_msg_idx = np.where(latest == np.array(new_ids))[0][0]
+        new_msg_idx = np.where(latest >= np.array(new_ids))[0][0]
         # list is sorted from newest to oldest, so want to get the newest
         # messages down to (but not including) the latest one in the DB
         new_messages = st['messages'][:new_msg_idx]
