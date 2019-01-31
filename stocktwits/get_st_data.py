@@ -95,6 +95,8 @@ def check_new_data(latest, st, all_messages, all_new_messages, filename, new_fil
     if latest in new_ids:
         print('got all new data')
         new_msg_idx = np.where(latest == np.array(new_ids))[0][0]
+        # list is sorted from newest to oldest, so want to get the newest
+        # messages down to (but not including) the latest one in the DB
         new_messages = st['messages'][:new_msg_idx]
         all_new_messages.extend(new_messages)
         all_messages = all_new_messages + all_messages
