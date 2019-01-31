@@ -1775,6 +1775,10 @@ def remove_stocks_from_watchlist(stocks):
 
 
 def update_lots_of_tickers():
+    """
+    DEPRECATED: stores data in .pk files
+    use update_lots_of_tickers_mongo instead
+    """
     tickers = get_stock_watchlist()
     while True:
         for t in tickers:
@@ -1782,9 +1786,29 @@ def update_lots_of_tickers():
             _ = get_stock_watchlist()
             try:
                 print('scraping', t)
-                scrape_historical_data(t)
+                # shouldn't need to do this without only_update_latest anymore,
+                # as it has been done for a while...
+                # scrape_historical_data(t)
                 # TODO: save latest in a temp file, then once finished getting all new data, append to big file
                 scrape_historical_data(t, only_update_latest=True)
+            except KeyError:
+                print('probably no data')
+                continue
+
+
+def update_lots_of_tickers_mongo():
+    tickers = get_stock_watchlist()
+    while True:
+        for t in tickers:
+            # update tickers to get watch list constantly
+            _ = get_stock_watchlist()
+            try:
+                print('scraping', t)
+                # shouldn't need to do this without only_update_latest anymore,
+                # as it has been done for a while...
+                # scrape_historical_data(t)
+                # TODO: save latest in a temp file, then once finished getting all new data, append to big file
+                scrape_historical_data_mongo(t, only_update_latest=True)
             except KeyError:
                 print('probably no data')
                 continue
@@ -1968,6 +1992,8 @@ def scrape_historical_data_mongo(ticker='AAPL', verbose=True, only_update_latest
             print('tried all access tokens, none have enough calls left')
             print('sleeping 5 minutes')
             time.sleep(60*5)
+        else:
+            earliest = st['cursor']['max']
 
     if only_update_latest:
         # see if we got all the new data yet
@@ -1996,7 +2022,7 @@ def scrape_historical_data_mongo(ticker='AAPL', verbose=True, only_update_latest
                 st, req_left, reset_time = api.get_stock_stream(ticker, {'max': earliest})
                 if st not in [None, False] and len(st['messages'] > 0):
                     if only_update_latest:
-                        done = check_new_data(latest, st, coll, db, ticker)
+                        done = check_new_data_mongo(latest, st, coll, db, ticker)
                         if done:
                             client.close()
                             return
@@ -2008,6 +2034,7 @@ def scrape_historical_data_mongo(ticker='AAPL', verbose=True, only_update_latest
 
                     earliest = st['cursor']['max']
             except:  # sometimes some weird connection issues
+                print('problem')
                 time.sleep(5)
                 continue
 
@@ -2063,12 +2090,16 @@ def check_new_data_mongo(latest, st, coll, db, ticker):
     ticker -- string, like 'AAPL'
     """
     new_ids = [m['id'] for m in st['messages']]
-    if latest in new_ids:
+    if latest in set(new_ids):
         print('got all new data')
         new_msg_idx = np.where(latest == np.array(new_ids))[0][0]
         # list is sorted from newest to oldest, so want to get the newest
         # messages down to (but not including) the latest one in the DB
         new_messages = st['messages'][:new_msg_idx]
+        if len(new_messages) == 0:
+            print('no new data')
+            return True
+
         # finish adding to temp_data collection
         try:
             coll.insert_many(new_messages, ordered=False)
