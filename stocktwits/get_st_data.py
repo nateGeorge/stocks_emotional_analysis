@@ -2020,7 +2020,7 @@ def scrape_historical_data_mongo(ticker='AAPL', verbose=True, only_update_latest
             time_elapsed = time.time() - start
             try:
                 st, req_left, reset_time = api.get_stock_stream(ticker, {'max': earliest})
-                if st not in [None, False] and len(st['messages'] > 0):
+                if st not in [None, False] and len(st['messages']) > 0:
                     if only_update_latest:
                         done = check_new_data_mongo(latest, st, coll, db, ticker)
                         if done:
