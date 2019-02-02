@@ -40,7 +40,7 @@ sys.path.append('../../stock_prediction/code')
 import dl_quandl_EOD as dlq
 
 DATA_DIR = '/home/nate/Dropbox/data/stocktwits/data/'
-
+DB = 'stocktwits'
 
 def make_dirs_from_home_dir(path):
     """
@@ -276,6 +276,8 @@ def get_sentiments_vader_dask(df, analyzer):
 def load_historical_data(ticker='AAPL', must_be_up_to_date=False):
     # TODO: try new method from swifter
 
+    # DEPRECATED: old method using pickle files
+    """
     # filepath = get_home_dir() + 'stocktwits/data/' + ticker + '/'
     filepath = '/home/nate/Dropbox/data/stocktwits/data/' + ticker + '/'
     filename = filepath + ticker + '_all_messages.pk'
@@ -284,6 +286,28 @@ def load_historical_data(ticker='AAPL', must_be_up_to_date=False):
             all_messages = pk.load(f)
     else:
         print('file doesn\'t exist!')
+        return None
+    """
+    client = MongoClient()
+    db = client[DB]
+    coll = db[ticker]
+    # only keep some columns
+    # TODO: look into all available columns, like 'source' and investigate further
+    all_messages = list(coll.find({}, {'body': 1,
+                                        'entities.sentiment.basic': 1,
+                                        'likes.total': 1,
+                                        'created_at': 1,
+                                        'user.id': 1,
+                                        'user.username': 1,
+                                        'user.join_date': 1,
+                                        'user.followers': 1,
+                                        'user.following': 1,
+                                        'user.ideas': 1,
+                                        'user.watchlist_stocks_count': 1,
+                                        'user.like_count': 1,
+                                        '_id': 0}))
+    if len(all_messages) == 0:
+        print("no data available in DB")
         return None
 
     df = pd.io.json.json_normalize(all_messages)
@@ -306,13 +330,15 @@ def load_historical_data(ticker='AAPL', must_be_up_to_date=False):
         print('stocktwits data up to date')
 
     # drop empty columns
-    df.drop(['entities.sentiment', 'reshare_message.message.entities.sentiment'], axis=1, inplace=True)
+    for c in ['entities.sentiment', 'reshare_message.message.entities.sentiment']:
+        if c in df.columns:
+            df.drop(c, axis=1, inplace=True)
     # is the bearish/bullish tag
     df['entities.sentiment.basic'].value_counts()
 
     # most useful columns
     useful_df = df.loc[:, ['body', 'entities.sentiment.basic', 'likes.total', 'user.followers']]
-    useful_df.drop_duplicates(inplace=True)
+    # useful_df.drop_duplicates(inplace=True)  # dupes should already be dropped in mongodb
     useful_df = useful_df.sort_index(ascending=False)
 
     analyzer = SentimentIntensityAnalyzer()
@@ -320,7 +346,7 @@ def load_historical_data(ticker='AAPL', must_be_up_to_date=False):
     https://github.com/cjhutto/vaderSentiment#about-the-scoring
     compound: most useful single metric -- average valence of each word in sentence
     """
-    print('getting sentiments')
+    print('getting sentiments...')
     # original non-parallelized way to do it:
     # sentiments = useful_df['body'].apply(lambda x: get_sentiments_vader(x, analyzer))
 
@@ -509,10 +535,12 @@ def combine_with_price_data_ib(ticker='TSLA', must_be_up_to_date=True):
     return full_3min, full_daily, future_price_chg_cols
 
 
-def combine_with_price_data_quandl(ticker='TSLA', must_be_up_to_date=False):
+def combine_with_price_data_quandl(ticker='AAPL', must_be_up_to_date=False, ema_periods=[5, 10, 20], future_days=[1, 3, 5, 10, 20, 40]):
     # meld with price data and see if any correlations
+    print('loading quandl data...')
     stocks = dlq.load_stocks()
 
+    print('loading stocktwits data...')
     st = load_historical_data(ticker, must_be_up_to_date=must_be_up_to_date)  # get stock twits data
     if st is None:  # data is not up to date
         print('stocktwits data not up to date')
@@ -569,8 +597,9 @@ def combine_with_price_data_quandl(ticker='TSLA', must_be_up_to_date=False):
     st_daily['neg_count'] = st_min[st_min['compound'] < -0.05]['compound'].resample('1D', label='left').count()
     # get moving average of sentiments
     # bear/bull from ST
-    st_daily['bear_bull_EMA'] = talib.EMA(st_daily['entities.sentiment.basic'].values, timeperiod=9)
-    st_daily['compound_EMA'] = talib.EMA(st_daily['compound'].values, timeperiod=9)
+    for e in ema_periods:
+        st_daily['bear_bull_EMA_' + str(e)] = talib.EMA(st_daily['entities.sentiment.basic'].values, timeperiod=e)
+        st_daily['compound_EMA_' + str(e)] = talib.EMA(st_daily['compound'].values, timeperiod=e)
 
     st_weekend = st_min[st_min.index.weekday.isin(set([5, 6]))]
     st_daily_weekend = st_weekend.resample('W-MON', label='right').mean()
@@ -599,7 +628,7 @@ def combine_with_price_data_quandl(ticker='TSLA', must_be_up_to_date=False):
 
     full_daily = st_daily_full.copy()#pd.concat([trades_1d, st_daily_full], axis=1)
     future_price_chg_cols = []
-    for i in range(1, 11):
+    for i in future_days:
         full_daily[str(i) + 'd_price_chg_pct'] = full_daily['Adj_Close'].pct_change(i)
         full_daily[str(i) + 'd_future_price_chg_pct'] = full_daily[str(i) + 'd_price_chg_pct'].shift(-i)
         # full_daily[str(i) + 'd_future_price_chg_pct'] = full_daily[str(i) + 'd_future_price'].pct_change(i)
@@ -1957,7 +1986,6 @@ def scrape_historical_data_mongo(ticker='AAPL', verbose=True, only_update_latest
                             post
     """
     # TODO: deal with missing data in the middle somehow...
-    DB = 'stocktwits'
     client = MongoClient()
     db = client[DB]
     # drop temp_data collection so no left over data is in there
@@ -2123,8 +2151,57 @@ def check_new_data_mongo(latest, st, coll, db, ticker):
     return False
 
 
+def clean_dupes(ticker):
+    # difficult to figure out:
+    # https://stackoverflow.com/questions/14184099/fastest-way-to-remove-duplicate-documents-in-mongodb
+    # generate duplicate on purpose:
+    # db['ZYME'].insertOne(db['ZYME'].findOne({}, {'_id': 0}));
+
+    client = MongoClient()
+    db = client[DB]
+    coll = db[ticker]
+    pipeline = [
+        {'$group': { '_id': '$id', 'doc' : {'$first': '$$ROOT'}}},
+        {'$replaceRoot': { 'newRoot': '$doc'}},
+        {'$out': ticker}  # write over existing collection
+    ]
+    coll.aggregate(pipeline, allowDiskUse=True)
+    # db.command('aggregate', ticker, pipeline=pipeline, allowDiskUse=True)
+    client.close()
+
+    # works in mongo
+    # db.data.aggregate([
+    # {
+    #     $group: { "_id": {'ticker': '$ticker', '52WeekChange': '$52WeekChange'}, "doc" : {"$first": "$$ROOT"}}
+    # },
+    # {
+    #     $replaceRoot: { "newRoot": "$doc"}
+    # },
+    # {
+    #     $out: 'data'
+    # }
+    # ],
+    # {allowDiskUse:true})
+
+
+def clean_all_dupes():
+    """
+    goes through all tickers in db and cleans up dupes
+    """
+    client = MongoClient()
+    db = client[DB]
+    sorted_tickers = sorted(db.list_collection_names())
+    for t in tqdm(sorted_tickers):
+        clean_dupes(t)
+
+
 if __name__ == "__main__":
     def do_some_analysis():
+        """
+        IDEA: sentiment seems to be inversely correlated to future price.  Use sentiment, along with past candlestick data, volatility index, and other
+        econometrics to predict price in next few weeks
+        """
+
         full_daily, future_price_chg_cols = combine_with_price_data_quandl(ticker='QQQ', must_be_up_to_date=False)
         # look at correlation between moving average sentiment/compound score and future prices
         sns.heatmap(full_daily[['bear_bull_EMA', 'compound_EMA'] + future_price_chg_cols].corr(), annot=True)
