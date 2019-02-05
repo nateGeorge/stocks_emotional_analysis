@@ -371,11 +371,11 @@ def load_historical_data(ticker='AAPL', must_be_up_to_date=False):
     return full_useful
 
 
-def get_eastern_market_open_close():
+def get_eastern_market_open_close(years=3):
     ny = pytz.timezone('America/New_York')
     today_ny = datetime.datetime.now(ny)
     ndq = mcal.get_calendar('NASDAQ')
-    open_days = ndq.schedule(start_date=today_ny - pd.Timedelta(str(3*365) + ' days'), end_date=today_ny)
+    open_days = ndq.schedule(start_date=today_ny - pd.Timedelta(str(years * 365) + ' days'), end_date=today_ny)
     # convert times to eastern
     for m in ['market_open', 'market_close']:
         open_days[m] = open_days[m].dt.tz_convert('America/New_York')
@@ -559,7 +559,7 @@ def combine_with_price_data_quandl(ticker='AAPL', must_be_up_to_date=False, ema_
     # go through each unique date, get market open and close times for each day
     # then get average of sentiment features from market closed times and add as new feature
     unique_dates = np.unique(st_min_1d.index.date)
-    open_days = get_eastern_market_open_close()
+    open_days = get_eastern_market_open_close(years=30)
     last_close = None
     # new_feats = {}
     new_feats = pd.DataFrame()
@@ -2234,12 +2234,24 @@ if __name__ == "__main__":
             all_bear_cmpd_ema_cols.extend(['bear_bull_EMA_' + str(e), 'compound_EMA_' + str(e)])
             all_bear_cmpd_sma_cols.extend(['bear_bull_SMA_' + str(e), 'compound_SMA_' + str(e)])
 
+
+        sns.heatmap(full_daily_qqq[all_bear_cmpd_cols + future_price_chg_cols_qqq].corr(), annot=True)
+        plt.tight_layout()
+        plt.show()
+
+        idx = range(full_daily_qqq.shape[0])
+        plt.scatter(full_daily_qqq['bear_bull_EMA_20'], full_daily_qqq['40d_future_price_chg_pct'], c=idx)
+        plt.colorbar()
+        plt.show()
+
         sns.heatmap(full_daily_uvxy[all_bear_cmpd_cols + future_price_chg_cols_uvxy].corr(), annot=True)
         plt.tight_layout()
         plt.show()
 
         # somewhat of a negative trend...should be enough to add to a ML algo
-        plt.scatter(full_daily_uvxy['bear_bull_EMA_20'], full_daily_uvxy['40d_future_price_chg_pct'])
+        idx = range(full_daily_uvxy.shape[0])
+        plt.scatter(full_daily_uvxy['bear_bull_EMA_20'], full_daily_uvxy['40d_future_price_chg_pct'], c=idx)
+        plt.colorbar()
         plt.show()
 
         plt.scatter(full_daily_uvxy['compound_EMA_10'], full_daily_uvxy['40d_future_price_chg_pct'])
@@ -2249,7 +2261,29 @@ if __name__ == "__main__":
         full_daily_uvxy[['bear_bull_EMA_10', 'Adj_Close']].plot(subplots=True); plt.show()
 
         # small ml algo with 40d price change as target and bear_bull, compound_EMA, and
+        from sklearn.ensemble import RandomForestRegressor
 
+        nona = full_daily_uvxy.dropna().copy()
+        features = nona[['bear_bull_EMA_20', 'compound_EMA_10', '5d_price_chg_pct', '20d_price_chg_pct', '40d_price_chg_pct']].values
+        targets = nona['40d_future_price_chg_pct'].values
+        train_size = 0.8
+        tr_idx = int(train_size * targets.shape[0])
+        tr_f = features[:tr_idx]
+        te_f = features[tr_idx:]
+        tr_t = targets[:tr_idx]
+        te_t = targets[tr_idx:]
+
+        rfr = RandomForestRegressor(n_estimators=500, max_depth=10, n_jobs=-1, random_state=42)
+        rfr.fit(tr_f, tr_t)
+        print(rfr.score(tr_f, tr_t))
+        print(rfr.score(te_f, te_t))
+        tr_preds = rfr.predict(tr_f)
+        plt.scatter(tr_t, tr_preds)
+        plt.show()
+
+        te_preds = rfr.predict(te_f)
+        plt.scatter(te_t, te_preds)
+        plt.show()
     # TODO: plot above with counts, create new feature from counts and bear/bull, resample bear/bull with sum instead of mean (and do for individual bear/bull)
     # examine what happened when it went bearish for a sec then back to bullish
 
