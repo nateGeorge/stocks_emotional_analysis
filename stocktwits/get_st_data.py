@@ -1760,7 +1760,7 @@ def get_stock_watchlist(update=True, return_trending=False):
         try:
             if os.path.exists(filename):
                 with open(filename, 'rb') as f:
-            cur_tickers = pk.load(f)
+                    cur_tickers = pk.load(f)
         except EOFError as e:
             print(e)
             time.sleep(1)
@@ -2225,14 +2225,30 @@ if __name__ == "__main__":
 
         # look at correlation between moving average sentiment/compound score and future prices
         sns.heatmap(full_daily_uvxy[['bear_bull_EMA_10', 'compound_EMA_10'] + future_price_chg_cols_uvxy].corr(), annot=True)
+        plt.tight_layout()
+        plt.show()
+
+        all_bear_cmpd_ema_cols = []
+        all_bear_cmpd_sma_cols = []
+        for e in [5, 10, 20]:
+            all_bear_cmpd_ema_cols.extend(['bear_bull_EMA_' + str(e), 'compound_EMA_' + str(e)])
+            all_bear_cmpd_sma_cols.extend(['bear_bull_SMA_' + str(e), 'compound_SMA_' + str(e)])
+
+        sns.heatmap(full_daily_uvxy[all_bear_cmpd_cols + future_price_chg_cols_uvxy].corr(), annot=True)
+        plt.tight_layout()
         plt.show()
 
         # somewhat of a negative trend...should be enough to add to a ML algo
-        plt.scatter(full_daily_uvxy['bear_bull_EMA_10'], full_daily_uvxy['10d_future_price_chg_pct'])
+        plt.scatter(full_daily_uvxy['bear_bull_EMA_20'], full_daily_uvxy['40d_future_price_chg_pct'])
+        plt.show()
+
+        plt.scatter(full_daily_uvxy['compound_EMA_10'], full_daily_uvxy['40d_future_price_chg_pct'])
         plt.show()
 
         # look at patterns with price
-        full_daily[['bear_bull_EMA', 'Adj_Close']].plot(subplots=True); plt.show()
+        full_daily_uvxy[['bear_bull_EMA_10', 'Adj_Close']].plot(subplots=True); plt.show()
+
+        # small ml algo with 40d price change as target and bear_bull, compound_EMA, and
 
     # TODO: plot above with counts, create new feature from counts and bear/bull, resample bear/bull with sum instead of mean (and do for individual bear/bull)
     # examine what happened when it went bearish for a sec then back to bullish
