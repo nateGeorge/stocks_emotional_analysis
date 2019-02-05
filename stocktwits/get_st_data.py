@@ -600,6 +600,8 @@ def combine_with_price_data_quandl(ticker='AAPL', must_be_up_to_date=False, ema_
     for e in ema_periods:
         st_daily['bear_bull_EMA_' + str(e)] = talib.EMA(st_daily['entities.sentiment.basic'].values, timeperiod=e)
         st_daily['compound_EMA_' + str(e)] = talib.EMA(st_daily['compound'].values, timeperiod=e)
+        st_daily['bear_bull_SMA_' + str(e)] = talib.SMA(st_daily['entities.sentiment.basic'].values, timeperiod=e)
+        st_daily['compound_SMA_' + str(e)] = talib.SMA(st_daily['compound'].values, timeperiod=e)
 
     st_weekend = st_min[st_min.index.weekday.isin(set([5, 6]))]
     st_daily_weekend = st_weekend.resample('W-MON', label='right').mean()
@@ -1752,9 +1754,20 @@ def get_stock_watchlist(update=True, return_trending=False):
 
     filename = '/home/nate/github/stocks_emotional_analysis/stocktwits/tickers_watching.pk'
     cur_tickers = []
-    if os.path.exists(filename):
-        with open(filename, 'rb') as f:
+    tries = 0
+    while True:
+        tries += 1
+        try:
+            if os.path.exists(filename):
+                with open(filename, 'rb') as f:
             cur_tickers = pk.load(f)
+        except EOFError as e:
+            print(e)
+            time.sleep(1)
+            if tries >= 4:
+                print("tried 5 times to open tickers watching pickle file with no success")
+                return None
+
 
     if update:
         trending = None
