@@ -1753,7 +1753,8 @@ def get_stock_watchlist(update=True, return_trending=False):
     filename = '/home/nate/github/stocks_emotional_analysis/stocktwits/tickers_watching.pk'
     cur_tickers = []
     if os.path.exists(filename):
-        cur_tickers = pk.load(open(filename, 'rb'))
+        with open(filename, 'rb') as f:
+            cur_tickers = pk.load(f)
 
     if update:
         trending = None
@@ -1765,7 +1766,9 @@ def get_stock_watchlist(update=True, return_trending=False):
 
         # only unique tickers
         tickers = sorted(list(set(cur_tickers + trending)))
-        pk.dump(tickers, open(filename, 'wb'), -1)  # use highest available pk protocol
+        with open(filename, 'wb') as f:
+            pk.dump(tickers, f, -1)  # use highest available pk protocol
+
         if return_trending:
             return tickers, trending
         return tickers
@@ -2202,13 +2205,17 @@ if __name__ == "__main__":
         econometrics to predict price in next few weeks
         """
 
-        full_daily, future_price_chg_cols = combine_with_price_data_quandl(ticker='QQQ', must_be_up_to_date=False)
+        full_daily_qqq, future_price_chg_cols_qqq = combine_with_price_data_quandl(ticker='QQQ', must_be_up_to_date=False)
+        full_daily_uvxy, future_price_chg_cols_uvxy = combine_with_price_data_quandl(ticker='UVXY', must_be_up_to_date=False)
+        full_daily_spy, future_price_chg_cols_spy = combine_with_price_data_quandl(ticker='SPY', must_be_up_to_date=False)
+        full_daily_iwm, future_price_chg_cols_iwm = combine_with_price_data_quandl(ticker='IWM', must_be_up_to_date=False)
+
         # look at correlation between moving average sentiment/compound score and future prices
-        sns.heatmap(full_daily[['bear_bull_EMA', 'compound_EMA'] + future_price_chg_cols].corr(), annot=True)
+        sns.heatmap(full_daily_uvxy[['bear_bull_EMA_10', 'compound_EMA_10'] + future_price_chg_cols_uvxy].corr(), annot=True)
         plt.show()
 
         # somewhat of a negative trend...should be enough to add to a ML algo
-        plt.scatter(full_daily['bear_bull_EMA'], full_daily['10d_future_price_chg_pct'])
+        plt.scatter(full_daily_uvxy['bear_bull_EMA_10'], full_daily_uvxy['10d_future_price_chg_pct'])
         plt.show()
 
         # look at patterns with price
