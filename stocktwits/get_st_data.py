@@ -1761,6 +1761,8 @@ def get_stock_watchlist(update=True, return_trending=False):
             if os.path.exists(filename):
                 with open(filename, 'rb') as f:
                     cur_tickers = pk.load(f)
+            
+            break
         except EOFError as e:
             print(e)
             time.sleep(1)
@@ -2235,7 +2237,7 @@ if __name__ == "__main__":
             all_bear_cmpd_sma_cols.extend(['bear_bull_SMA_' + str(e), 'compound_SMA_' + str(e)])
 
 
-        sns.heatmap(full_daily_qqq[all_bear_cmpd_cols + future_price_chg_cols_qqq].corr(), annot=True)
+        sns.heatmap(full_daily_qqq[all_bear_cmpd_ema_cols + future_price_chg_cols_qqq].corr(), annot=True)
         plt.tight_layout()
         plt.show()
 
@@ -2244,7 +2246,7 @@ if __name__ == "__main__":
         plt.colorbar()
         plt.show()
 
-        sns.heatmap(full_daily_uvxy[all_bear_cmpd_cols + future_price_chg_cols_uvxy].corr(), annot=True)
+        sns.heatmap(full_daily_uvxy[all_bear_cmpd_ema_cols + future_price_chg_cols_uvxy].corr(), annot=True)
         plt.tight_layout()
         plt.show()
 
