@@ -626,7 +626,10 @@ def combine_with_price_data_quandl(ticker='AAPL', must_be_up_to_date=False, ema_
     to_drop_idxs = st_daily_full[st_daily_full.index.weekday.isin(set([5, 6]))].index
     st_daily_full.drop(to_drop_idxs, inplace=True)
     # add weekend data to daily df
-    st_daily_full = pd.concat([st_daily_full, st_daily_weekend, st_daily_weekend_std], axis=1).ffill().dropna()
+    # get earliest point from st
+    earliest_date = st.index.min()
+    st_daily_full = pd.concat([st_daily_full, st_daily_weekend, st_daily_weekend_std], axis=1).ffill()
+    st_daily_full = st_daily_full.loc[earliest_date:]
 
     full_daily = st_daily_full.copy()#pd.concat([trades_1d, st_daily_full], axis=1)
     future_price_chg_cols = []
@@ -1761,7 +1764,7 @@ def get_stock_watchlist(update=True, return_trending=False):
             if os.path.exists(filename):
                 with open(filename, 'rb') as f:
                     cur_tickers = pk.load(f)
-            
+
             break
         except EOFError as e:
             print(e)
