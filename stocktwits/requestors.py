@@ -22,6 +22,9 @@ except:
 
 
 # StockTwits details
+# need to get ATs from oath/token call to API:
+# https://api.stocktwits.com/developers/docs/authentication
+# or use get_ats.py to get them
 ST_BASE_URL = 'https://api.stocktwits.com/api/2/'
 all_ats = ['', 'stock_twits_testing_at', 'stock_twits_testing2_at', 'stock_twits_aapl1', 'stock_twits_vioo', 'stock_twits_sly']
 at_name = all_ats[0]
@@ -111,18 +114,19 @@ class Requests():
                 trimmed_params = {k: v for k, v in params.items() if k not in ST_BASE_PARAMS.keys()}
                 log.error('GET Timeout to {} w/ {}'.format(url[len(ST_BASE_URL):], trimmed_params))
             if resp is not None:
-                break
-        if resp is None:
-            log.error('GET loop Timeout')
-            return None, None, None
-        else:
-            header_info = get_header_info(resp.headers)
-            if header_info[0] is None:
-                print('header info was None.  resp.content:')
-                print(resp.content)
+                header_info = get_header_info(resp.headers)
+                if header_info[0] is None:
+                    # seems to be from bad gateway error
+                    print('header info was None.  resp.content:')
+                    print(resp.content)
+                    print('sleeping 30s...')
+                    time.sleep(30)
+                else:
+                    # return main results
+                    return json.loads(resp.content.decode('utf-8')), header_info[0], header_info[1]
+            else:
+                log.error('GET loop Timeout')
                 return None, None, None
-
-            return json.loads(resp.content.decode('utf-8')), header_info[0], header_info[1]
 
     def post_json(url, params=None, deadline=30):
         """ Tries to post a couple times in a loop before giving up if a timeout.

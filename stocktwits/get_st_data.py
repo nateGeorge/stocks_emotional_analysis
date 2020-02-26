@@ -1,12 +1,16 @@
 # TODO: keep track of which tickers have reached end of data
 
 import os
+import gc
 import time
 import operator
 import pickle as pk
 from pprint import pprint
 from collections import OrderedDict
+from concurrent.futures import ProcessPoolExecutor
 
+import psutil
+import glob
 import pytz
 import talib
 import datetime
@@ -19,6 +23,9 @@ import dask.dataframe as dd
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.model_selection import ParameterGrid
 from tqdm import tqdm
+from pymongo import MongoClient
+from pymongo.errors import BulkWriteError
+from pprint import pprint
 
 import api  # local file in same directory
 
@@ -32,6 +39,8 @@ import scrape_ib
 sys.path.append('../../stock_prediction/code')
 import dl_quandl_EOD as dlq
 
+DATA_DIR = '/home/nate/Dropbox/data/stocktwits/data/'
+DB = 'stocktwits'
 
 def make_dirs_from_home_dir(path):
     """
@@ -72,10 +81,24 @@ def get_home_dir(repo_name='stocks_emotional_analysis'):
 
 
 def check_new_data(latest, st, all_messages, all_new_messages, filename, new_filename):
+    """
+    checks to see if all new data has been retrieved based on 'latest'
+    args:
+    latest -- int; should be latest id from current data in db
+    st -- json object returned from API
+    all_messages -- dict with all current messages
+    all_new_messages -- dict with all new messages just retrieved
+    filename -- string; where full data is stored
+    new_filename -- string; where updated data is stored
+    """
     new_ids = [m['id'] for m in st['messages']]
-    if latest in new_ids:
+    # old way of doing it, but doesn't work if latest message was deleted!
+    # if latest in set(new_ids):
+    if min(new_ids) < latest:
         print('got all new data')
-        new_msg_idx = np.where(latest == np.array(new_ids))[0][0]
+        new_msg_idx = np.where(latest >= np.array(new_ids))[0][0]
+        # list is sorted from newest to oldest, so want to get the newest
+        # messages down to (but not including) the latest one in the DB
         new_messages = st['messages'][:new_msg_idx]
         all_new_messages.extend(new_messages)
         all_messages = all_new_messages + all_messages
@@ -114,7 +137,7 @@ def scrape_historical_data(ticker='AAPL', verbose=True, only_update_latest=False
     """
     #TODO: deal with misssing data in the middle somehow...
     # filepath = get_home_dir() + 'stocktwits/data/' + ticker + '/'
-    filepath = '/home/nate/Dropbox/data/stocktwits/data/' + ticker + '/'
+    filepath = DATA_DIR + ticker + '/'
     if not os.path.exists(filepath): make_dirs(filepath)
     filename = filepath + ticker + '_all_messages.pk'
     new_filename = filepath + ticker + '_new_messages.pk'  # for new data when updating
@@ -253,6 +276,8 @@ def get_sentiments_vader_dask(df, analyzer):
 def load_historical_data(ticker='AAPL', must_be_up_to_date=False):
     # TODO: try new method from swifter
 
+    # DEPRECATED: old method using pickle files
+    """
     # filepath = get_home_dir() + 'stocktwits/data/' + ticker + '/'
     filepath = '/home/nate/Dropbox/data/stocktwits/data/' + ticker + '/'
     filename = filepath + ticker + '_all_messages.pk'
@@ -261,6 +286,28 @@ def load_historical_data(ticker='AAPL', must_be_up_to_date=False):
             all_messages = pk.load(f)
     else:
         print('file doesn\'t exist!')
+        return None
+    """
+    client = MongoClient()
+    db = client[DB]
+    coll = db[ticker]
+    # only keep some columns
+    # TODO: look into all available columns, like 'source' and investigate further
+    all_messages = list(coll.find({}, {'body': 1,
+                                        'entities.sentiment.basic': 1,
+                                        'likes.total': 1,
+                                        'created_at': 1,
+                                        'user.id': 1,
+                                        'user.username': 1,
+                                        'user.join_date': 1,
+                                        'user.followers': 1,
+                                        'user.following': 1,
+                                        'user.ideas': 1,
+                                        'user.watchlist_stocks_count': 1,
+                                        'user.like_count': 1,
+                                        '_id': 0}))
+    if len(all_messages) == 0:
+        print("no data available in DB")
         return None
 
     df = pd.io.json.json_normalize(all_messages)
@@ -283,13 +330,15 @@ def load_historical_data(ticker='AAPL', must_be_up_to_date=False):
         print('stocktwits data up to date')
 
     # drop empty columns
-    df.drop(['entities.sentiment', 'reshare_message.message.entities.sentiment'], axis=1, inplace=True)
+    for c in ['entities.sentiment', 'reshare_message.message.entities.sentiment']:
+        if c in df.columns:
+            df.drop(c, axis=1, inplace=True)
     # is the bearish/bullish tag
     df['entities.sentiment.basic'].value_counts()
 
     # most useful columns
     useful_df = df.loc[:, ['body', 'entities.sentiment.basic', 'likes.total', 'user.followers']]
-    useful_df.drop_duplicates(inplace=True)
+    # useful_df.drop_duplicates(inplace=True)  # dupes should already be dropped in mongodb
     useful_df = useful_df.sort_index(ascending=False)
 
     analyzer = SentimentIntensityAnalyzer()
@@ -297,7 +346,7 @@ def load_historical_data(ticker='AAPL', must_be_up_to_date=False):
     https://github.com/cjhutto/vaderSentiment#about-the-scoring
     compound: most useful single metric -- average valence of each word in sentence
     """
-    print('getting sentiments')
+    print('getting sentiments...')
     # original non-parallelized way to do it:
     # sentiments = useful_df['body'].apply(lambda x: get_sentiments_vader(x, analyzer))
 
@@ -322,11 +371,11 @@ def load_historical_data(ticker='AAPL', must_be_up_to_date=False):
     return full_useful
 
 
-def get_eastern_market_open_close():
+def get_eastern_market_open_close(years=3):
     ny = pytz.timezone('America/New_York')
     today_ny = datetime.datetime.now(ny)
     ndq = mcal.get_calendar('NASDAQ')
-    open_days = ndq.schedule(start_date=today_ny - pd.Timedelta(str(3*365) + ' days'), end_date=today_ny)
+    open_days = ndq.schedule(start_date=today_ny - pd.Timedelta(str(years * 365) + ' days'), end_date=today_ny)
     # convert times to eastern
     for m in ['market_open', 'market_close']:
         open_days[m] = open_days[m].dt.tz_convert('America/New_York')
@@ -486,10 +535,12 @@ def combine_with_price_data_ib(ticker='TSLA', must_be_up_to_date=True):
     return full_3min, full_daily, future_price_chg_cols
 
 
-def combine_with_price_data_quandl(ticker='TSLA', must_be_up_to_date=False):
+def combine_with_price_data_quandl(ticker='AAPL', must_be_up_to_date=False, ema_periods=[5, 10, 20], future_days=[1, 3, 5, 10, 20, 40]):
     # meld with price data and see if any correlations
+    print('loading quandl data...')
     stocks = dlq.load_stocks()
 
+    print('loading stocktwits data...')
     st = load_historical_data(ticker, must_be_up_to_date=must_be_up_to_date)  # get stock twits data
     if st is None:  # data is not up to date
         print('stocktwits data not up to date')
@@ -508,7 +559,7 @@ def combine_with_price_data_quandl(ticker='TSLA', must_be_up_to_date=False):
     # go through each unique date, get market open and close times for each day
     # then get average of sentiment features from market closed times and add as new feature
     unique_dates = np.unique(st_min_1d.index.date)
-    open_days = get_eastern_market_open_close()
+    open_days = get_eastern_market_open_close(years=30)
     last_close = None
     # new_feats = {}
     new_feats = pd.DataFrame()
@@ -546,8 +597,11 @@ def combine_with_price_data_quandl(ticker='TSLA', must_be_up_to_date=False):
     st_daily['neg_count'] = st_min[st_min['compound'] < -0.05]['compound'].resample('1D', label='left').count()
     # get moving average of sentiments
     # bear/bull from ST
-    st_daily['bear_bull_EMA'] = talib.EMA(st_daily['entities.sentiment.basic'].values, timeperiod=9)
-    st_daily['compound_EMA'] = talib.EMA(st_daily['compound'].values, timeperiod=9)
+    for e in ema_periods:
+        st_daily['bear_bull_EMA_' + str(e)] = talib.EMA(st_daily['entities.sentiment.basic'].values, timeperiod=e)
+        st_daily['compound_EMA_' + str(e)] = talib.EMA(st_daily['compound'].values, timeperiod=e)
+        st_daily['bear_bull_SMA_' + str(e)] = talib.SMA(st_daily['entities.sentiment.basic'].values, timeperiod=e)
+        st_daily['compound_SMA_' + str(e)] = talib.SMA(st_daily['compound'].values, timeperiod=e)
 
     st_weekend = st_min[st_min.index.weekday.isin(set([5, 6]))]
     st_daily_weekend = st_weekend.resample('W-MON', label='right').mean()
@@ -572,11 +626,14 @@ def combine_with_price_data_quandl(ticker='TSLA', must_be_up_to_date=False):
     to_drop_idxs = st_daily_full[st_daily_full.index.weekday.isin(set([5, 6]))].index
     st_daily_full.drop(to_drop_idxs, inplace=True)
     # add weekend data to daily df
-    st_daily_full = pd.concat([st_daily_full, st_daily_weekend, st_daily_weekend_std], axis=1).ffill().dropna()
+    # get earliest point from st
+    earliest_date = st.index.min()
+    st_daily_full = pd.concat([st_daily_full, st_daily_weekend, st_daily_weekend_std], axis=1).ffill()
+    st_daily_full = st_daily_full.loc[earliest_date:]
 
     full_daily = st_daily_full.copy()#pd.concat([trades_1d, st_daily_full], axis=1)
     future_price_chg_cols = []
-    for i in range(1, 11):
+    for i in future_days:
         full_daily[str(i) + 'd_price_chg_pct'] = full_daily['Adj_Close'].pct_change(i)
         full_daily[str(i) + 'd_future_price_chg_pct'] = full_daily[str(i) + 'd_price_chg_pct'].shift(-i)
         # full_daily[str(i) + 'd_future_price_chg_pct'] = full_daily[str(i) + 'd_future_price'].pct_change(i)
@@ -1700,8 +1757,22 @@ def get_stock_watchlist(update=True, return_trending=False):
 
     filename = '/home/nate/github/stocks_emotional_analysis/stocktwits/tickers_watching.pk'
     cur_tickers = []
-    if os.path.exists(filename):
-        cur_tickers = pk.load(open(filename, 'rb'))
+    tries = 0
+    while True:
+        tries += 1
+        try:
+            if os.path.exists(filename):
+                with open(filename, 'rb') as f:
+                    cur_tickers = pk.load(f)
+
+            break
+        except EOFError as e:
+            print(e)
+            time.sleep(1)
+            if tries >= 4:
+                print("tried 5 times to open tickers watching pickle file with no success")
+                return None
+
 
     if update:
         trending = None
@@ -1713,7 +1784,9 @@ def get_stock_watchlist(update=True, return_trending=False):
 
         # only unique tickers
         tickers = sorted(list(set(cur_tickers + trending)))
-        pk.dump(tickers, open(filename, 'wb'), -1)  # use highest available pk protocol
+        with open(filename, 'wb') as f:
+            pk.dump(tickers, f, -1)  # use highest available pk protocol
+
         if return_trending:
             return tickers, trending
         return tickers
@@ -1754,6 +1827,10 @@ def remove_stocks_from_watchlist(stocks):
 
 
 def update_lots_of_tickers():
+    """
+    DEPRECATED: stores data in .pk files
+    use update_lots_of_tickers_mongo instead
+    """
     tickers = get_stock_watchlist()
     while True:
         for t in tickers:
@@ -1761,9 +1838,29 @@ def update_lots_of_tickers():
             _ = get_stock_watchlist()
             try:
                 print('scraping', t)
-                scrape_historical_data(t)
+                # shouldn't need to do this without only_update_latest anymore,
+                # as it has been done for a while...
+                # scrape_historical_data(t)
                 # TODO: save latest in a temp file, then once finished getting all new data, append to big file
                 scrape_historical_data(t, only_update_latest=True)
+            except KeyError:
+                print('probably no data')
+                continue
+
+
+def update_lots_of_tickers_mongo():
+    tickers = get_stock_watchlist()
+    while True:
+        for t in tickers:
+            # update tickers to get watch list constantly
+            _ = get_stock_watchlist()
+            try:
+                print('scraping', t)
+                # shouldn't need to do this without only_update_latest anymore,
+                # as it has been done for a while...
+                # scrape_historical_data(t)
+                # TODO: save latest in a temp file, then once finished getting all new data, append to big file
+                scrape_historical_data_mongo(t, only_update_latest=True)
             except KeyError:
                 print('probably no data')
                 continue
@@ -1794,19 +1891,404 @@ def plot_close_bear_bull_count(full_daily):
     plt.show()
 
 
+def convert_pickle_to_mongodb(ticker):
+    """
+    pickle files were used as a first storage mechanism, but are extremely slow to load.
+    This function moves the data from a pickle file into the mongodb.
+    """
+    filepath = DATA_DIR + ticker + '/'
+    filename = filepath + ticker + '_all_messages.pk'
+
+    # # as long as memory isn't too full, move on to next one
+    # # the biggest .pk file for SPY is 8GB on disk, and takes up about 65GB
+    # vmem = psutil.virtual_memory()
+    # pid = os.getpid()
+    # py = psutil.Process(pid)
+    # memoryUse = py.memory_info()[0]/2.**30
+
+    with open(filename, 'rb') as f:
+        all_messages = pk.load(f)
+
+    DB = 'stocktwits'
+    client = MongoClient()
+    db = client[DB]
+    coll = db[ticker]
+
+    # remove duplicates from entries -- takes way too long
+    # non_dupes = []
+    # for m in tqdm(all_messages):
+    #     if m not in non_dupes:
+    #         non_dupes.append(m)
+
+    """
+    # drop _id column so can use insert_many
+    # seems to only get added upon insert_many
+    for m in tqdm(all_messages):
+        if '_id' in m:
+            del m['_id']
+    """
+
+
+    try:
+        coll.insert_many(all_messages, ordered=False)
+    except BulkWriteError as bwe:
+        pass
+        # would print the error, but pretty much always duplicates
+        # pprint(bwe.details)
+
+    """
+    # too slow -- estimated at 130 hours for AAPL
+    for m in tqdm(all_messages):
+        # check if already in DB...some dupes
+        if coll.find_one({'id': m['id']}) is None:
+            # restructure for more efficient storage
+            # --actually don't do for now, since some of the subdata changes over time
+            # m_restr = {'id': m['id'],
+            #             'body': m['body'],
+            #             'created_at': m['created_at'],
+            #             'user': }
+            coll.insert_one(m)
+    """
+
+
+    # checking what user profiles look like over time
+    # created = []
+    # user = []
+    # for m in all_messages:
+    #     if m['user']['id'] == 689515:
+    #         user.append(m['user'])
+    #         created.append(m['created_at'])
+
+    del all_messages
+    gc.collect()
+    client.close()
+    print('finished ', ticker)
+
+
+def convert_all_pickle_to_mongo(linear=False, max_workers=None):
+    """
+    converts all pickle files to mongodb storage
+    """
+    tickers = sorted([t.split('/')[-1] for t in glob.glob(DATA_DIR + '*')])
+    # tickers to run separately since they have huge files
+    ignore_tickers = ['SPY', 'FB', 'AMZN', 'AAPL', 'BB', 'NFLX', 'QQQ', 'BABA', 'DRYS', 'UVXY', 'GOOG', 'NUGT', 'AMD', 'JNUG', 'TWTR', 'SNAP', 'BAC', 'VXX']
+    ignore_set = set(ignore_tickers)
+    if linear:
+        for t in tqdm(tickers):
+            print('on', t)
+            convert_pickle_to_mongodb(t)
+    else:
+        # jobs = []
+        with ProcessPoolExecutor(max_workers=max_workers) as executor:
+            for t in tickers:
+                if t not in ignore_set:
+                    executor.submit(convert_pickle_to_mongodb, t)
+                    # jobs.append(t)
+
+        for t in ignore_tickers:
+            convert_pickle_to_mongodb(t)
+
+        # for t in jobs:
+        #     pass
+
+
+def scrape_historical_data_mongo(ticker='AAPL', verbose=True, only_update_latest=False):
+    """
+    finds latest datapoint from db and updates from there
+
+    API returns the 30 latest posts, so have to work backwards from the newest posts
+
+    args:
+    ticker -- string like 'AAPL'
+    verbose -- boolean, prints debugs if True
+    only_update_latest -- boolean; if True, will only get the latest updates
+                            (from most recent down to max already in db)
+                            Otherwise, gets updates from earliest in db to first
+                            post
+    """
+    # TODO: deal with missing data in the middle somehow...
+    client = MongoClient()
+    db = client[DB]
+    # drop temp_data collection so no left over data is in there
+    db.drop_collection('temp_data')
+    coll = db[ticker]
+    if ticker in db.list_collection_names():
+        earliest = coll.find_one(sort=[('id', 1)])['id']  #should also be able to do this: all_messages[-1]['id']
+        latest = coll.find_one(sort=[('id', -1)])['id']
+        if only_update_latest:
+            # TODO: deal with existing new messages, just starting over if partially completed for now
+            earliest = None
+            coll = db['temp_data']
+            print('going to update only the latest messages')
+        else:
+            print('going to get the earliest messages to the end')
+    else:
+        print('no previously existing data')
+        # can't only update latest because no previously existing data
+        only_update_latest = False
+        earliest = None
+        latest = None
+
+    start = time.time()
+    # returns a dictionary with keys ['cursor', 'response', 'messages', 'symbol']
+    # docs say returns less than or equal to max, but seems to be only less than
+    # get first request
+    st = None
+    while st in [None, False]:
+        st, req_left, reset_time = api.get_stock_stream(ticker, {'max': earliest})
+        if st is None:
+            print('returned None for some reason, sleeping 1 min and trying again')
+            time.sleep(60)
+        elif st is False:
+            print('tried all access tokens, none have enough calls left')
+            print('sleeping 5 minutes')
+            time.sleep(60*5)
+        else:
+            earliest = st['cursor']['max']
+
+    if only_update_latest:
+        # see if we got all the new data yet
+        done = check_new_data_mongo(latest, st, coll, db, ticker)
+        if done:
+            client.close()
+            return
+
+    # inserts into main collection if updating earliest or scraping fresh;
+    # inserts into temp_data if updating latest
+    try:
+        coll.insert_many(st['messages'], ordered=False)
+    except BulkWriteError as bwe:
+        pass
+
+    num_calls = 1
+
+    while True:
+        if st['cursor']['more']:
+            if verbose:
+                print('getting more data, made', str(num_calls), 'calls so far')
+                print(str(req_left), 'requests left')
+
+            time_elapsed = time.time() - start
+            try:
+                st, req_left, reset_time = api.get_stock_stream(ticker, {'max': earliest})
+                if st not in [None, False] and len(st['messages']) > 0:
+                    if only_update_latest:
+                        done = check_new_data_mongo(latest, st, coll, db, ticker)
+                        if done:
+                            client.close()
+                            return
+
+                    try:
+                        coll.insert_many(st['messages'], ordered=False)
+                    except BulkWriteError as bwe:
+                        pass
+
+                    earliest = st['cursor']['max']
+            except:  # sometimes some weird connection issues
+                print('problem')
+                time.sleep(5)
+                continue
+
+            if req_left is None:
+                print('requests left is None, probably need to wait longer...')
+                time.sleep(5 * 60)
+                st = {'cursor': {'more': True}}
+                continue
+            elif req_left is False:
+                print('requests left is False, probably need to wait longer...')
+                time.sleep(5 * 60)
+                st = {'cursor': {'more': True}}
+                continue
+            elif req_left < 2:  # or (time_elapsed < 3600 and num_calls > 398)
+                print('made too many calls too fast, need to change access token or')
+                print('wait another', str(round((3600 - time_elapsed) / 60)), 'minutes')
+                print('made', str(num_calls), 'calls in', str(round(time_elapsed)), 'seconds')
+
+                # TODO: sleep until reset time from header is met
+                time.sleep(3601 - time_elapsed)
+                start = time.time()
+                num_calls = 0
+
+            if st is None:
+                print('returned None for some reason')
+                st = {'cursor': {'more': True}}
+                continue
+            elif st is False:
+                print('tried all access tokens, sleeping for 5 mins')
+                time.sleep(5*60)
+                st = {'cursor': {'more': True}}
+                continue
+
+            num_calls += 1
+            # seems to take long enough that we don't need to sleep
+            # time.sleep(0.117)
+        else:
+            print('reached end of data')
+            break
+
+
+def check_new_data_mongo(latest, st, coll, db, ticker):
+    """
+    checks to see if all new data has been retrieved based on 'latest'
+    if latest is in st ids, then return True, else False
+    adds last bit of data to temp_data db, then copies over to full db
+
+    args:
+    latest -- int; should be latest id from current data in db
+    st -- json object returned from API
+    coll -- collection (should be temp_data)
+    db -- database connection
+    ticker -- string, like 'AAPL'
+    """
+    new_ids = [m['id'] for m in st['messages']]
+    # old way of doing it, but doesn't work if latest message was deleted!
+    # if latest in set(new_ids):
+    if min(new_ids) < latest:
+        print('got all new data')
+        new_msg_idx = np.where(latest >= np.array(new_ids))[0][0]
+        # list is sorted from newest to oldest, so want to get the newest
+        # messages down to (but not including) the latest one in the DB
+        new_messages = st['messages'][:new_msg_idx]
+        if len(new_messages) == 0:
+            print('no new data')
+            return True
+
+        # finish adding to temp_data collection
+        try:
+            coll.insert_many(new_messages, ordered=False)
+        except BulkWriteError as bwe:
+            pass
+
+        # add all data from temp_data to
+        ticker_coll = db[ticker]
+        new_data = list(coll.find())
+        try:
+            ticker_coll.insert_many(new_data, ordered=False)
+        except BulkWriteError as bwe:
+            pass
+
+        return True
+
+    return False
+
+
+def clean_dupes(ticker):
+    # difficult to figure out:
+    # https://stackoverflow.com/questions/14184099/fastest-way-to-remove-duplicate-documents-in-mongodb
+    # generate duplicate on purpose:
+    # db['ZYME'].insertOne(db['ZYME'].findOne({}, {'_id': 0}));
+
+    client = MongoClient()
+    db = client[DB]
+    coll = db[ticker]
+    pipeline = [
+        {'$group': { '_id': '$id', 'doc' : {'$first': '$$ROOT'}}},
+        {'$replaceRoot': { 'newRoot': '$doc'}},
+        {'$out': ticker}  # write over existing collection
+    ]
+    coll.aggregate(pipeline, allowDiskUse=True)
+    # db.command('aggregate', ticker, pipeline=pipeline, allowDiskUse=True)
+    client.close()
+
+    # works in mongo
+    # db.data.aggregate([
+    # {
+    #     $group: { "_id": {'ticker': '$ticker', '52WeekChange': '$52WeekChange'}, "doc" : {"$first": "$$ROOT"}}
+    # },
+    # {
+    #     $replaceRoot: { "newRoot": "$doc"}
+    # },
+    # {
+    #     $out: 'data'
+    # }
+    # ],
+    # {allowDiskUse:true})
+
+
+def clean_all_dupes():
+    """
+    goes through all tickers in db and cleans up dupes
+    """
+    client = MongoClient()
+    db = client[DB]
+    sorted_tickers = sorted(db.list_collection_names())
+    for t in tqdm(sorted_tickers):
+        clean_dupes(t)
+
+
 if __name__ == "__main__":
-    full_daily, future_price_chg_cols = combine_with_price_data_quandl(ticker='QQQ', must_be_up_to_date=False)
-    # look at correlation between moving average sentiment/compound score and future prices
-    sns.heatmap(full_daily[['bear_bull_EMA', 'compound_EMA'] + future_price_chg_cols].corr(), annot=True)
-    plt.show()
+    def do_some_analysis():
+        """
+        IDEA: sentiment seems to be inversely correlated to future price.  Use sentiment, along with past candlestick data, volatility index, and other
+        econometrics to predict price in next few weeks
+        """
 
-    # somewhat of a negative trend...should be enough to add to a ML algo
-    plt.scatter(full_daily['bear_bull_EMA'], full_daily['10d_future_price_chg_pct'])
-    plt.show()
+        full_daily_qqq, future_price_chg_cols_qqq = combine_with_price_data_quandl(ticker='QQQ', must_be_up_to_date=False)
+        full_daily_uvxy, future_price_chg_cols_uvxy = combine_with_price_data_quandl(ticker='UVXY', must_be_up_to_date=False)
+        full_daily_spy, future_price_chg_cols_spy = combine_with_price_data_quandl(ticker='SPY', must_be_up_to_date=False)
+        full_daily_iwm, future_price_chg_cols_iwm = combine_with_price_data_quandl(ticker='IWM', must_be_up_to_date=False)
 
-    # look at patterns with price
-    full_daily[['bear_bull_EMA', 'Adj_Close']].plot(subplots=True); plt.show()
+        # look at correlation between moving average sentiment/compound score and future prices
+        sns.heatmap(full_daily_uvxy[['bear_bull_EMA_10', 'compound_EMA_10'] + future_price_chg_cols_uvxy].corr(), annot=True)
+        plt.tight_layout()
+        plt.show()
 
+        all_bear_cmpd_ema_cols = []
+        all_bear_cmpd_sma_cols = []
+        for e in [5, 10, 20]:
+            all_bear_cmpd_ema_cols.extend(['bear_bull_EMA_' + str(e), 'compound_EMA_' + str(e)])
+            all_bear_cmpd_sma_cols.extend(['bear_bull_SMA_' + str(e), 'compound_SMA_' + str(e)])
+
+
+        sns.heatmap(full_daily_qqq[all_bear_cmpd_ema_cols + future_price_chg_cols_qqq].corr(), annot=True)
+        plt.tight_layout()
+        plt.show()
+
+        idx = range(full_daily_qqq.shape[0])
+        plt.scatter(full_daily_qqq['bear_bull_EMA_20'], full_daily_qqq['40d_future_price_chg_pct'], c=idx)
+        plt.colorbar()
+        plt.show()
+
+        sns.heatmap(full_daily_uvxy[all_bear_cmpd_ema_cols + future_price_chg_cols_uvxy].corr(), annot=True)
+        plt.tight_layout()
+        plt.show()
+
+        # somewhat of a negative trend...should be enough to add to a ML algo
+        idx = range(full_daily_uvxy.shape[0])
+        plt.scatter(full_daily_uvxy['bear_bull_EMA_20'], full_daily_uvxy['40d_future_price_chg_pct'], c=idx)
+        plt.colorbar()
+        plt.show()
+
+        plt.scatter(full_daily_uvxy['compound_EMA_10'], full_daily_uvxy['40d_future_price_chg_pct'])
+        plt.show()
+
+        # look at patterns with price
+        full_daily_uvxy[['bear_bull_EMA_10', 'Adj_Close']].plot(subplots=True); plt.show()
+
+        # small ml algo with 40d price change as target and bear_bull, compound_EMA, and
+        from sklearn.ensemble import RandomForestRegressor
+
+        nona = full_daily_uvxy.dropna().copy()
+        features = nona[['bear_bull_EMA_20', 'compound_EMA_10', '5d_price_chg_pct', '20d_price_chg_pct', '40d_price_chg_pct']].values
+        targets = nona['40d_future_price_chg_pct'].values
+        train_size = 0.8
+        tr_idx = int(train_size * targets.shape[0])
+        tr_f = features[:tr_idx]
+        te_f = features[tr_idx:]
+        tr_t = targets[:tr_idx]
+        te_t = targets[tr_idx:]
+
+        rfr = RandomForestRegressor(n_estimators=500, max_depth=10, n_jobs=-1, random_state=42)
+        rfr.fit(tr_f, tr_t)
+        print(rfr.score(tr_f, tr_t))
+        print(rfr.score(te_f, te_t))
+        tr_preds = rfr.predict(tr_f)
+        plt.scatter(tr_t, tr_preds)
+        plt.show()
+
+        te_preds = rfr.predict(te_f)
+        plt.scatter(te_t, te_preds)
+        plt.show()
     # TODO: plot above with counts, create new feature from counts and bear/bull, resample bear/bull with sum instead of mean (and do for individual bear/bull)
     # examine what happened when it went bearish for a sec then back to bullish
 

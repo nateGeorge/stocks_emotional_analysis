@@ -80,7 +80,13 @@ def get_trending_stocks():
     returns a lot more than visible on the site
     seems to return in order of trending most
     """
-    trending, req_left, reset_time = R.get_json(ST_BASE_URL + 'trending/symbols.json', params=ST_BASE_PARAMS)
+    trending = None
+    while trending is None:
+        trending, req_left, reset_time = R.get_json(ST_BASE_URL + 'trending/symbols.json', params=ST_BASE_PARAMS)
+        if trending is None:
+            print('trending stocks returned None; sleeping 30s...')
+            time.sleep(30)
+
     if trending is False:
         return None
 
