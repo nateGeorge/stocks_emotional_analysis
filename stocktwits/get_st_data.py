@@ -39,7 +39,8 @@ import scrape_ib
 sys.path.append('../../stock_prediction/code')
 import dl_quandl_EOD as dlq
 
-DATA_DIR = '/home/nate/Dropbox/data/stocktwits/data/'
+# DATA_DIR = '/home/nate/Dropbox/data/stocktwits/data/'
+DATA_DIR = '/media/nate/onedrive/data/stocktwits/data/'
 DB = 'stocktwits'
 
 def make_dirs_from_home_dir(path):
@@ -2124,6 +2125,7 @@ def scrape_historical_data_mongo(ticker='AAPL', verbose=True, only_update_latest
             # time.sleep(0.117)
         else:
             print('reached end of data')
+            client.close()
             break
 
 
@@ -2227,6 +2229,62 @@ if __name__ == "__main__":
         full_daily_uvxy, future_price_chg_cols_uvxy = combine_with_price_data_quandl(ticker='UVXY', must_be_up_to_date=False)
         full_daily_spy, future_price_chg_cols_spy = combine_with_price_data_quandl(ticker='SPY', must_be_up_to_date=False)
         full_daily_iwm, future_price_chg_cols_iwm = combine_with_price_data_quandl(ticker='IWM', must_be_up_to_date=False)
+
+        # look for rolling correlation trends of varying time periods -- for example, over a few years UVXY had good correlation to bear/bull (and probably previous price)
+        keep_cols = ['Adj_Close', 'bear_bull_SMA_20', 'bear_bull_EMA_20', 'compound_SMA_20', '5d_price_chg_pct', '5d_future_price_chg_pct', '20d_price_chg_pct', '20d_future_price_chg_pct']
+        min_daily_uvxy = full_daily_uvxy[keep_cols].copy()
+        # correlation of bear_bull_SMA_20 to 20d_future_price_chg_pct
+        corr = min_daily_uvxy[['bear_bull_SMA_20', '20d_future_price_chg_pct']].rolling(20).corr()
+        test = corr.unstack(1)['bear_bull_SMA_20']['20d_future_price_chg_pct']
+
+        # get periods with large correlations
+        large_corr_idx = test[test.abs() > 0.6].index
+
+        # look at data from latest large corr
+        last = large_corr_idx[-1]
+        test[last]
+
+        last_idx = min_daily_uvxy.index.get_loc(last)
+        data = min_daily_uvxy[last_idx - 20:last_idx]
+        plt.scatter(data['bear_bull_SMA_20'], data['20d_future_price_chg_pct'], c='k')
+
+        # next 20
+        next_data = min_daily_uvxy[last_idx:last_idx + 20]
+        plt.scatter(next_data['bear_bull_SMA_20'], next_data['20d_future_price_chg_pct'], c='g')
+        # and next 20...
+        next_next_data = min_daily_uvxy[last_idx + 20:last_idx + 40]
+        plt.scatter(next_next_data['bear_bull_SMA_20'], next_next_data['20d_future_price_chg_pct'], c='r')
+        plt.show()
+
+        # finding from this data:
+        """
+        people were bullish on UVXY, it went up, people got less bullish (inverse corr),
+        then it started going down and people continued to get more bearish
+        """
+        # look at the latest
+        data = min_daily_uvxy[-40:-20]
+        plt.scatter(data['bear_bull_SMA_20'], data['20d_future_price_chg_pct'], c='k')
+
+        # next 20
+        next_data = min_daily_uvxy[-20:]
+        plt.scatter(next_data['bear_bull_SMA_20'], next_data['20d_future_price_chg_pct'], c='r')
+        plt.show()
+
+        # latest bear/bull
+        plt.plot(next_data['bear_bull_SMA_20']); plt.show()
+
+        # all bear/bull
+        min_daily_uvxy['compound_SMA_20'].plot()
+        min_daily_uvxy['20d_future_price_chg_pct'].plot(secondary_y=True)
+        min_daily_uvxy['20d_price_chg_pct'].plot(secondary_y=True)
+        plt.legend()
+        plt.show()
+
+        # TODO:
+        # for timeframes where correlations seem strong enough,
+        # fit knn model to 80% of correlation period, then test on remaining 20%
+        # if score on test set is high enough, use predictions until correlation
+        # breaks or test set predictions start to degrade
 
         # look at correlation between moving average sentiment/compound score and future prices
         sns.heatmap(full_daily_uvxy[['bear_bull_EMA_10', 'compound_EMA_10'] + future_price_chg_cols_uvxy].corr(), annot=True)
