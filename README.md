@@ -1,5 +1,7 @@
 # stocks_emotional_analysis
-Uses sentiment and emotion classifier to predict future stock prices.
+Uses sentiment and emotion classifier to predict future stock prices.  This also scrapes stocktwits.
+
+Currently it stores data in hdf5 files, which is unweildy.  It would be much better to store data in MongoDB or another NoSQL database.
 
 
 # stocktwits
