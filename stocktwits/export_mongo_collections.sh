@@ -16,7 +16,7 @@ collectionArray=($collections);
 for ((i=0; i<${#collectionArray[@]}; ++i));
 do
 echo 'exporting collection' ${collectionArray[$i]}
-mongoexport -d stocktwits -c ${collectionArray[$i]} -o /media/nate/nates/github/stocks_emotional_analysis/stocktwits/${collectionArray[$i]}.json --jsonArray --pretty
+mongoexport -d $dbname -c ${collectionArray[$i]} -o /media/nate/nates/github/stocks_emotional_analysis/stocktwits/${collectionArray[$i]}.json --jsonArray --pretty
 done
 
 IFS=$OIFS;
